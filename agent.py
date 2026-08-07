@@ -1,7 +1,7 @@
 import json
 import ollama
 
-MODEL = "kimi-k2.6:cloud"
+MODEL = "minimax-m2.7:cloud"
 
 def add(a: float, b: float) -> float:
     return a + b
@@ -47,35 +47,72 @@ TOOL_SCHEMAS = [
     },
 ]
 
+def run_turn(messages: list[dict]) -> tuple[str, str, list[dict]]:
+    thinking_text = ""
+    content_text = ""
+    tool_calls = []
+
+    stream = ollama.chat(
+        model=MODEL,
+        messages=messages,
+        tools=TOOL_SCHEMAS,
+        options={"think": True},
+        stream=True,
+    )
+
+    for chunk in stream:
+        msg = chunk["message"]
+        if msg.get("thinking"):
+            thinking_text += msg["thinking"]
+        if msg.get("content"):
+            content_text += msg["content"]
+        if msg.get("tool_calls"):
+            tcs = msg["tool_calls"]
+            if not isinstance(tcs, list):
+                tcs = [tcs]
+            tool_calls.extend(tcs)
+
+    return content_text, thinking_text, tool_calls
+
+
+def execute_tool_calls(messages: list[dict], tool_calls: list[dict]) -> None:
+    for tool_call in tool_calls:
+        fn = tool_call["function"]
+        name = fn["name"]
+        args = fn["arguments"]
+        result = TOOLS[name](**args)
+
+        messages.append({
+            "role": "tool",
+            "content": str(result),
+        })
+        print(f"TOOL {result}")
+
+
+def build_assistant_message(content_text: str, thinking_text: str, tool_calls: list[dict]) -> dict:
+    msg = {"role": "assistant", "content": content_text, "thinking": thinking_text}
+    if tool_calls:
+        msg["tool_calls"] = tool_calls
+    return msg
+
+
 def run(prompt: str) -> str:
     messages = [{"role": "user", "content": prompt}]
 
     while True:
-        response = ollama.chat(
-            model=MODEL,
-            messages=messages,
-            tools=TOOL_SCHEMAS,
-        )
+        content_text, thinking_text, tool_calls = run_turn(messages)
 
-        message = response["message"]
+        if thinking_text:
+            print(f"THINKING: {thinking_text}")
 
-        if not message.get("tool_calls"):
-            return message["content"]
+        assistant_msg = build_assistant_message(content_text, thinking_text, tool_calls)
+        messages.append(assistant_msg)
 
-        messages.append(message)
+        if not tool_calls:
+            return content_text
 
-        for tool_call in message["tool_calls"]:
-            fn = tool_call["function"]
-            name = fn["name"]
-            args = fn["arguments"]
-            result = TOOLS[name](**args)
-
-            messages.append({
-                "role": "tool",
-                "content": str(result),
-            })
-            print(f"TOOL {result}")
+        execute_tool_calls(messages, tool_calls)
 
 if __name__ == "__main__":
-    answer = run("What is 39058704923875 + 5524352345234? Use the tools.")
-    print(answer)
+    answer = run("What is 375 + 554 * 347? Use the tools.")
+    print(f"CONTENT {answer}")
