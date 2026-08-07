@@ -46,11 +46,7 @@ TOOL_SCHEMAS = [
     },
 ]
 
-def run_turn(messages: list[dict]) -> tuple[str, str, list[dict]]:
-    thinking_text = ""
-    content_text = ""
-    tool_calls = []
-
+def run_turn(messages: list[dict]):
     stream = ollama.chat(
         model=MODEL,
         messages=messages,
@@ -62,16 +58,14 @@ def run_turn(messages: list[dict]) -> tuple[str, str, list[dict]]:
     for chunk in stream:
         msg = chunk["message"]
         if msg.get("thinking"):
-            thinking_text += msg["thinking"]
+            yield {"type": "thinking", "text": msg["thinking"]}
         if msg.get("content"):
-            content_text += msg["content"]
+            yield {"type": "content", "text": msg["content"]}
         if msg.get("tool_calls"):
             tcs = msg["tool_calls"]
             if not isinstance(tcs, list):
                 tcs = [tcs]
-            tool_calls.extend(tcs)
-
-    return content_text, thinking_text, tool_calls
+            yield {"type": "tool_calls", "tool_calls": tcs}
 
 
 def execute_tool_calls(messages: list[dict], tool_calls: list[dict]) -> None:
@@ -99,10 +93,21 @@ def run(messages: list[dict], prompt: str) -> list[dict]:
     messages.append({"role": "user", "content": prompt})
 
     while True:
-        content_text, thinking_text, tool_calls = run_turn(messages)
+        thinking_text = ""
+        content_text = ""
+        tool_calls = []
 
-        if thinking_text:
-            print(f"THINKING: {thinking_text}")
+        for event in run_turn(messages):
+            if event["type"] == "thinking":
+                thinking_text += event["text"]
+                print(event["text"], end="", flush=True)
+            elif event["type"] == "content":
+                content_text += event["text"]
+                print(event["text"], end="", flush=True)
+            elif event["type"] == "tool_calls":
+                tool_calls.extend(event["tool_calls"])
+
+        print()  # newline after streaming
 
         assistant_msg = build_assistant_message(content_text, thinking_text, tool_calls)
         messages.append(assistant_msg)
