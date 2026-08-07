@@ -1,4 +1,3 @@
-import json
 import ollama
 
 MODEL = "minimax-m2.7:cloud"
@@ -96,8 +95,8 @@ def build_assistant_message(content_text: str, thinking_text: str, tool_calls: l
     return msg
 
 
-def run(prompt: str) -> str:
-    messages = [{"role": "user", "content": prompt}]
+def run(messages: list[dict], prompt: str) -> list[dict]:
+    messages.append({"role": "user", "content": prompt})
 
     while True:
         content_text, thinking_text, tool_calls = run_turn(messages)
@@ -109,10 +108,11 @@ def run(prompt: str) -> str:
         messages.append(assistant_msg)
 
         if not tool_calls:
-            return content_text
+            print(messages)
+            return messages
 
         execute_tool_calls(messages, tool_calls)
 
 if __name__ == "__main__":
-    answer = run("What is 375 + 554 * 347? Use the tools.")
-    print(f"CONTENT {answer}")
+    conversation = run([], "What is 375 + 554 * 347? Use the tools.")
+    print(f"CONTENT {conversation[-1]['content']}")
