@@ -27,7 +27,6 @@ def stream_assistant_turn(messages: list[dict]) -> tuple[str, str, list[dict]]:
     with st.chat_message("assistant"):
         thinking_expander = st.expander("Thinking")
         content_placeholder = st.empty()
-        tool_placeholder = st.empty()
 
         for event in run_turn(messages):
             if event["type"] == "thinking":
@@ -38,12 +37,6 @@ def stream_assistant_turn(messages: list[dict]) -> tuple[str, str, list[dict]]:
                 content_placeholder.write(content_text)
             elif event["type"] == "tool_calls":
                 tool_calls.extend(event["tool_calls"])
-                lines = []
-                for tc in tool_calls:
-                    name = tc["function"]["name"]
-                    args = tc["function"]["arguments"]
-                    lines.append(f"Tool: {name}({args})")
-                tool_placeholder.caption("\n".join(lines))
 
     return content_text, thinking_text, tool_calls
 
@@ -62,9 +55,9 @@ def handle_prompt(prompt: str) -> None:
 
         prev_len = len(st.session_state.messages)
         execute_tool_calls(st.session_state.messages, tool_calls)
-        for msg in st.session_state.messages[prev_len:]:
+        for tc, msg in zip(tool_calls, st.session_state.messages[prev_len:]):
             with st.chat_message("assistant"):
-                st.caption(f"Result: {msg['content']}")
+                st.caption(f"{tc['function']['name']}({tc['function']['arguments']}): {msg['content']}")
 
 if prompt := st.chat_input("Ask something"):
     handle_prompt(prompt)
