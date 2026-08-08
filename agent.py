@@ -63,7 +63,7 @@ TOOL_SCHEMAS = [
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": "Maximum number of results to return (default: 10)",
+                        "description": "Maximum number of results to return is 10.",
                     },
                 },
                 "required": ["query"],

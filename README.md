@@ -7,3 +7,7 @@ Use the `secret-interface` conda environment:
 ```bash
 conda activate secret-interface
 ```
+
+## Warnings
+
+Streamlit might silent crash during errors. Rerun script in which case.

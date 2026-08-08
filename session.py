@@ -72,6 +72,41 @@ class ChatSession:
         self.messages.append({"role": "user", "content": prompt})
         self._save()
 
+def list_conversations(save_dir: Path = DEFAULT_SAVE_DIR) -> list[dict]:
+    """Return metadata for all saved conversations, newest first."""
+    save_dir = Path(save_dir)
+    if not save_dir.exists():
+        return []
+    conversations = []
+    for f in sorted(save_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            data = json.loads(f.read_text())
+        except (json.JSONDecodeError, KeyError):
+            continue
+        messages = data.get("messages", [])
+        title = "New chat"
+        for msg in messages:
+            if msg.get("role") == "user" and msg.get("content"):
+                title = msg["content"][:60]
+                break
+        conversations.append({
+            "id": data.get("id", f.stem),
+            "title": title,
+            "updated_at": data.get("updated_at", ""),
+            "message_count": len(messages),
+        })
+    return conversations
+
+
+def delete_conversation(conversation_id: str, save_dir: Path = DEFAULT_SAVE_DIR) -> bool:
+    """Delete a conversation file. Returns True if deleted, False if not found."""
+    file_path = Path(save_dir) / f"{conversation_id}.json"
+    if file_path.exists():
+        file_path.unlink()
+        return True
+    return False
+
+
 if __name__ == "__main__":
     session = ChatSession()
     session.add_user_turn("What is 35 * 29 + 54 * 47? Use the tools.")

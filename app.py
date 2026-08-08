@@ -1,11 +1,44 @@
 import streamlit as st
-from session import ChatSession
+from session import ChatSession, list_conversations, delete_conversation
 
+st.set_page_config(page_title="Agent Chat", layout="wide")
+
+# ---- Sidebar ----
+with st.sidebar:
+    st.title("Chats")
+
+    if st.button("＋ New Chat", use_container_width=True):
+        st.session_state.session = ChatSession()
+        st.rerun()
+
+    st.divider()
+
+    conversations = list_conversations()
+    current_id = st.session_state.get("session") and st.session_state.session.conversation_id
+
+    for conv in conversations:
+        is_active = current_id == conv["id"]
+        label = f"{'▸ ' if is_active else ''}{conv['title']}"
+        if st.button(
+            label,
+            key=conv["id"],
+            use_container_width=True,
+            type="primary" if is_active else "secondary",
+        ):
+            if not is_active:
+                st.session_state.session = ChatSession(conversation_id=conv["id"])
+                st.rerun()
+
+    if not conversations:
+        st.caption("No saved chats yet.")
+
+# ---- Main ----
 st.title("Agent Chat")
 
 if "session" not in st.session_state:
     st.session_state.session = ChatSession()
 session = st.session_state.session
+
 
 def render_messages(messages: list[dict]) -> None:
     for msg in messages:
@@ -19,6 +52,7 @@ def render_messages(messages: list[dict]) -> None:
                     st.markdown(msg["content"])
                 if msg.get("tool_calls"):
                     st.code(str(msg["tool_calls"]))
+
 
 render_messages(session.messages)
 
@@ -38,7 +72,6 @@ if prompt := st.chat_input("Ask something"):
             for event in session.run_assist_turn():
                 if event["type"] == "thinking":
                     thinking_text += event["text"]
-                    # print(event['text'], end='')
                     thinking_placeholder.code(thinking_text)
                 elif event["type"] == "content":
                     content_text += event["text"]
@@ -52,4 +85,3 @@ if prompt := st.chat_input("Ask something"):
                 tool_expander = st.expander(f"{event['name']}({event['arguments']})").empty()
                 if event["type"] == "tool_result":
                     tool_expander.code(f"{event['result']}")
-            
