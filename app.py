@@ -14,11 +14,11 @@ def render_messages(messages: list[dict]) -> None:
             with st.chat_message(role):
                 if msg.get("thinking"):
                     with st.expander("Thinking"):
-                        st.write(msg["thinking"])
+                        st.code(msg["thinking"])
                 if msg.get("content"):
-                    st.write(msg["content"])
+                    st.markdown(msg["content"])
                 if msg.get("tool_calls"):
-                    st.write(str(msg["tool_calls"]))
+                    st.code(str(msg["tool_calls"]))
 
 render_messages(session.messages)
 
@@ -49,6 +49,7 @@ if prompt := st.chat_input("Ask something"):
 
         with st.chat_message("assistant"):
             for event in session.run_tool_turn():
+                tool_expander = st.expander(f"{event['name']}({event['arguments']})").empty()
                 if event["type"] == "tool_result":
-                    st.caption(f"🔧 {event['name']}({event['arguments']}) → {event['result']}")
+                    tool_expander.code(f"{event['result']}")
             

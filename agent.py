@@ -1,4 +1,5 @@
 import ollama
+from ollama import WebFetchResponse, WebSearchResponse, web_fetch, web_search
 
 MODEL = "minimax-m3:cloud"
 
@@ -11,6 +12,8 @@ def multiply(a: float, b: float) -> float:
 TOOLS = {
     "add": add,
     "multiply": multiply,
+    "web_search": web_search,
+    "web_fetch": web_fetch,
 }
 
 TOOL_SCHEMAS = [
@@ -44,6 +47,44 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search the web for information. Returns results with title, URL, and content snippet.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 10)",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_fetch",
+            "description": "Fetch and extract the content of a web page from a URL.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The URL to fetch content from",
+                    },
+                },
+                "required": ["url"],
+            },
+        },
+    },
 ]
 
 def run_turn(messages: list[dict]):
@@ -68,6 +109,27 @@ def run_turn(messages: list[dict]):
             yield {"type": "tool_calls", "tool_calls": tcs}
 
 
+def format_web_search_result(result: WebSearchResponse, query: str) -> str:
+    lines = [f'Search results for "{query}":']
+    # print('rresult nnum')
+    # print(len(result.results))
+    for r in result.results:
+        lines.append(f"Title: {r.title or '(no title)'}")
+        lines.append(f"URL: {r.url or '(no url)'}")
+        lines.append(f"Content: {r.content or '(no content)'}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def format_web_fetch_result(result: WebFetchResponse, url: str) -> str:
+    lines = [f'Fetch results for "{url}":']
+    lines.append(f"Title: {result.title or '(no title)'}")
+    lines.append(f"Content: {result.content or '(no content)'}")
+    if result.links:
+        lines.append(f"Links: {', '.join(result.links)}")
+    return "\n".join(lines)
+
+
 def execute_tool_calls(messages: list[dict], tool_calls: list[dict]) -> None:
     for tool_call in tool_calls:
         fn = tool_call["function"]
@@ -75,11 +137,17 @@ def execute_tool_calls(messages: list[dict], tool_calls: list[dict]) -> None:
         args = fn["arguments"]
         result = TOOLS[name](**args)
 
+        if name == "web_search":
+            content = format_web_search_result(result, args.get("query", ""))
+        elif name == "web_fetch":
+            content = format_web_fetch_result(result, args.get("url", ""))
+        else:
+            content = str(result)
+
         messages.append({
             "role": "tool",
-            "content": str(result),
+            "content": content,
         })
-        # print(f"TOOL {result}")
 
 
 def build_assistant_message(content_text: str, thinking_text: str, tool_calls: list[dict]) -> dict:
