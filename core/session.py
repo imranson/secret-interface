@@ -107,6 +107,17 @@ def delete_conversation(conversation_id: str, save_dir: Path = DEFAULT_SAVE_DIR)
     return False
 
 
+def archive_conversation(conversation_id: str, save_dir: Path = DEFAULT_SAVE_DIR) -> bool:
+    """Move a conversation file to an archived/ subdirectory. Returns True if archived, False if not found."""
+    file_path = Path(save_dir) / f"{conversation_id}.json"
+    if not file_path.exists():
+        return False
+    archive_dir = Path(save_dir) / "archived"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    file_path.rename(archive_dir / f"{conversation_id}.json")
+    return True
+
+
 if __name__ == "__main__":
     session = ChatSession()
     session.add_user_turn("What is 35 * 29 + 54 * 47? Use the tools.")

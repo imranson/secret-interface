@@ -1,5 +1,5 @@
 import streamlit as st
-from core.session import ChatSession, list_conversations, delete_conversation
+from core.session import ChatSession, list_conversations, archive_conversation
 
 st.set_page_config(page_title="Agent Chat", layout="wide")
 
@@ -19,14 +19,22 @@ with st.sidebar:
     for conv in conversations:
         is_active = current_id == conv["id"]
         label = f"{'▸ ' if is_active else ''}{conv['title']}"
-        if st.button(
-            label,
-            key=conv["id"],
-            use_container_width=True,
-            type="primary" if is_active else "secondary",
-        ):
-            if not is_active:
-                st.session_state.session = ChatSession(conversation_id=conv["id"])
+        col1, col2 = st.columns([0.85, 0.15])
+        with col1:
+            if st.button(
+                label,
+                key=conv["id"],
+                use_container_width=True,
+                type="primary" if is_active else "secondary",
+            ):
+                if not is_active:
+                    st.session_state.session = ChatSession(conversation_id=conv["id"])
+                    st.rerun()
+        with col2:
+            if st.button("📦", key=f"archive-{conv['id']}", use_container_width=True):
+                archive_conversation(conv["id"])
+                if is_active:
+                    st.session_state.session = ChatSession()
                 st.rerun()
 
     if not conversations:
