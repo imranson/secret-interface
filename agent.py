@@ -1,5 +1,7 @@
+import json
+
 import ollama
-from ollama import WebFetchResponse, WebSearchResponse, web_fetch, web_search
+from ollama import web_fetch, web_search
 
 MODEL = "minimax-m3:cloud"
 
@@ -109,26 +111,8 @@ def run_turn(messages: list[dict]):
             yield {"type": "tool_calls", "tool_calls": tcs}
 
 
-def format_web_search_result(result: WebSearchResponse, query: str) -> str:
-    lines = [f'Search results for "{query}":']
-    # print('rresult nnum')
-    # print(len(result.results))
-    for r in result.results:
-        lines.append(f"Title: {r.title or '(no title)'}")
-        lines.append(f"URL: {r.url or '(no url)'}")
-        lines.append(f"Content: {r.content or '(no content)'}")
-        lines.append("")
-    return "\n".join(lines).rstrip()
-
-
-def format_web_fetch_result(result: WebFetchResponse, url: str) -> str:
-    lines = [f'Fetch results for "{url}":']
-    lines.append(f"Title: {result.title or '(no title)'}")
-    lines.append(f"Content: {result.content or '(no content)'}")
-    if result.links:
-        lines.append(f"Links: {', '.join(result.links)}")
-    return "\n".join(lines)
-
+def _to_json(result) -> str:
+    return json.dumps(result, default=vars)
 
 def execute_tool_calls(messages: list[dict], tool_calls: list[dict]) -> None:
     for tool_call in tool_calls:
@@ -136,17 +120,11 @@ def execute_tool_calls(messages: list[dict], tool_calls: list[dict]) -> None:
         name = fn["name"]
         args = fn["arguments"]
         result = TOOLS[name](**args)
-
-        if name == "web_search":
-            content = format_web_search_result(result, args.get("query", ""))
-        elif name == "web_fetch":
-            content = format_web_fetch_result(result, args.get("url", ""))
-        else:
-            content = str(result)
-
         messages.append({
             "role": "tool",
-            "content": content,
+            "name": name,
+            "arguments": args,
+            "content": _to_json(result),
         })
 
 
