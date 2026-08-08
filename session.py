@@ -23,6 +23,7 @@ class ChatSession:
 
         assistant_msg = build_assistant_message(content_text, thinking_text, tool_calls)
         self.messages.append(assistant_msg)
+        print(f"appending message {self.messages}")
 
     def run_tool_turn(self) -> Generator[dict, None, None]:
         prev_len = len(self.messages)

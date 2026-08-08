@@ -79,7 +79,7 @@ def execute_tool_calls(messages: list[dict], tool_calls: list[dict]) -> None:
             "role": "tool",
             "content": str(result),
         })
-        print(f"TOOL {result}")
+        # print(f"TOOL {result}")
 
 
 def build_assistant_message(content_text: str, thinking_text: str, tool_calls: list[dict]) -> dict:
@@ -100,20 +100,20 @@ def run(messages: list[dict], prompt: str) -> list[dict]:
         for event in run_turn(messages):
             if event["type"] == "thinking":
                 thinking_text += event["text"]
-                print(event["text"], end="", flush=True)
+                # print(event["text"], end="", flush=True)
             elif event["type"] == "content":
                 content_text += event["text"]
-                print(event["text"], end="", flush=True)
+                # print(event["text"], end="", flush=True)
             elif event["type"] == "tool_calls":
                 tool_calls.extend(event["tool_calls"])
 
-        print()  # newline after streaming
+        # print()  # newline after streaming
 
         assistant_msg = build_assistant_message(content_text, thinking_text, tool_calls)
         messages.append(assistant_msg)
 
         if not tool_calls:
-            print(messages)
+            # print(messages)
             return messages
 
         execute_tool_calls(messages, tool_calls)

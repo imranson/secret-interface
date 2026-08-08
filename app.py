@@ -3,7 +3,9 @@ from session import ChatSession
 
 st.title("Agent Chat")
 
-session = ChatSession()
+if "session" not in st.session_state:
+    st.session_state.session = ChatSession()
+session = st.session_state.session
 
 def render_messages(messages: list[dict]) -> None:
     for msg in messages:
@@ -31,11 +33,11 @@ if prompt := st.chat_input("Ask something"):
             content_placeholder = st.empty()
             thinking_text = ""
             content_text = ""
-            
+
             for event in session.run_assist_turn():
                 if event["type"] == "thinking":
                     thinking_text += event["text"]
-                    print(event['text'], end='')
+                    # print(event['text'], end='')
                     thinking_placeholder.code(thinking_text)
                 elif event["type"] == "content":
                     content_text += event["text"]
