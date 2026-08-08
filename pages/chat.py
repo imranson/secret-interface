@@ -1,5 +1,5 @@
 import streamlit as st
-from session import ChatSession, list_conversations, delete_conversation
+from core.session import ChatSession, list_conversations, delete_conversation
 
 st.set_page_config(page_title="Agent Chat", layout="wide")
 
