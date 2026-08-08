@@ -1,6 +1,6 @@
 import ollama
 
-MODEL = "minimax-m2.7:cloud"
+MODEL = "minimax-m3:cloud"
 
 def add(a: float, b: float) -> float:
     return a + b
@@ -119,5 +119,5 @@ def run(messages: list[dict], prompt: str) -> list[dict]:
         execute_tool_calls(messages, tool_calls)
 
 if __name__ == "__main__":
-    conversation = run([], "What is 375 + 554 * 347? Use the tools.")
+    conversation = run([], "What is 35 * 29 + 54 * 47? Use the tools.")
     print(f"CONTENT {conversation[-1]['content']}")

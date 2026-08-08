@@ -1,10 +1,9 @@
 import streamlit as st
-from agent import run_turn, build_assistant_message, execute_tool_calls
+from session import ChatSession
 
 st.title("Agent Chat")
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+session = ChatSession()
 
 def render_messages(messages: list[dict]) -> None:
     for msg in messages:
@@ -16,48 +15,37 @@ def render_messages(messages: list[dict]) -> None:
                         st.write(msg["thinking"])
                 if msg.get("content"):
                     st.write(msg["content"])
+                if msg.get("tool_calls"):
+                    st.write(str(msg["tool_calls"]))
 
-render_messages(st.session_state.messages)
-
-def stream_assistant_turn(messages: list[dict]) -> tuple[str, str, list[dict]]:
-    thinking_text = ""
-    content_text = ""
-    tool_calls = []
-
-    with st.chat_message("assistant"):
-        thinking_expander = st.expander("Thinking")
-        content_placeholder = st.empty()
-
-        for event in run_turn(messages):
-            if event["type"] == "thinking":
-                thinking_text += event["text"]
-                thinking_expander.write(thinking_text)
-            elif event["type"] == "content":
-                content_text += event["text"]
-                content_placeholder.write(content_text)
-            elif event["type"] == "tool_calls":
-                tool_calls.extend(event["tool_calls"])
-
-    return content_text, thinking_text, tool_calls
-
-def handle_prompt(prompt: str) -> None:
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    render_messages(st.session_state.messages)
-
-    while True:
-        content_text, thinking_text, tool_calls = stream_assistant_turn(st.session_state.messages)
-
-        assistant_msg = build_assistant_message(content_text, thinking_text, tool_calls)
-        st.session_state.messages.append(assistant_msg)
-
-        if not tool_calls:
-            break
-
-        prev_len = len(st.session_state.messages)
-        execute_tool_calls(st.session_state.messages, tool_calls)
-        for tc, msg in zip(tool_calls, st.session_state.messages[prev_len:]):
-            with st.chat_message("assistant"):
-                st.caption(f"{tc['function']['name']}({tc['function']['arguments']}): {msg['content']}")
+render_messages(session.messages)
 
 if prompt := st.chat_input("Ask something"):
-    handle_prompt(prompt)
+    session.add_user_turn(prompt)
+    render_messages(session.messages)
+
+    while True:
+        with st.chat_message("assistant"):
+            thinking_expander = st.expander("Thinking")
+            thinking_placeholder = thinking_expander.empty()
+            content_placeholder = st.empty()
+            thinking_text = ""
+            content_text = ""
+            
+            for event in session.run_assist_turn():
+                if event["type"] == "thinking":
+                    thinking_text += event["text"]
+                    print(event['text'], end='')
+                    thinking_placeholder.code(thinking_text)
+                elif event["type"] == "content":
+                    content_text += event["text"]
+                    content_placeholder.markdown(content_text)
+
+        if "tool_calls" not in session.messages[-1] or not session.messages[-1]["tool_calls"]:
+            break
+
+        with st.chat_message("assistant"):
+            for event in session.run_tool_turn():
+                if event["type"] == "tool_result":
+                    st.caption(f"🔧 {event['name']}({event['arguments']}) → {event['result']}")
+            
