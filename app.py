@@ -24,7 +24,8 @@ render_messages(session.messages)
 
 if prompt := st.chat_input("Ask something"):
     session.add_user_turn(prompt)
-    render_messages(session.messages)
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
     while True:
         with st.chat_message("assistant"):
