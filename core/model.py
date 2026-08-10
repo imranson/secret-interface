@@ -3,7 +3,7 @@ import json
 import ollama
 from ollama import web_fetch, web_search
 
-MODEL = "minimax-m3:cloud"
+MODEL = "kimi-k2.6:cloud"
 
 def add(a: float, b: float) -> float:
     return a + b

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Generator
 
-from .agent import run_turn, build_assistant_message, execute_tool_calls
+from .model import run_turn, build_assistant_message, execute_tool_calls
 
 DEFAULT_SAVE_DIR = Path("./conversations")
 
