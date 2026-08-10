@@ -1,9 +1,14 @@
 import json
+from datetime import datetime
+from pathlib import Path
 
 import ollama
 from ollama import web_fetch, web_search
 
 MODEL = "kimi-k2.6:cloud"
+
+_PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
+_SYSTEM_PROMPT = (_PROMPT_DIR / "default-system-prompt-1.md").read_text()
 
 def add(a: float, b: float) -> float:
     return a + b
@@ -11,11 +16,15 @@ def add(a: float, b: float) -> float:
 def multiply(a: float, b: float) -> float:
     return a * b
 
+def get_current_datetime() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
 TOOLS = {
     "add": add,
     "multiply": multiply,
     "web_search": web_search,
     "web_fetch": web_fetch,
+    "get_current_datetime": get_current_datetime,
 }
 
 TOOL_SCHEMAS = [
@@ -63,7 +72,7 @@ TOOL_SCHEMAS = [
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": "Maximum number of results to return is 10.",
+                        "description": "Maximum number of results to return is 10. If not given, 3 is the default max.",
                     },
                 },
                 "required": ["query"],
@@ -87,12 +96,24 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_current_datetime",
+            "description": "Get the current date and time. Returns a string in YYYY-MM-DD HH:MM:SS format.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
 ]
 
 def run_turn(messages: list[dict]):
     stream = ollama.chat(
         model=MODEL,
-        messages=messages,
+        messages=[{"role": "system", "content": _SYSTEM_PROMPT}] + messages,
         tools=TOOL_SCHEMAS,
         options={"think": True},
         stream=True,
