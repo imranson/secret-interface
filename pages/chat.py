@@ -56,7 +56,9 @@ def render_messages(messages: list[dict]) -> None:
                 if msg.get("thinking"):
                     with st.expander("Thinking"):
                         st.code(msg["thinking"])
-                if msg.get("content"):
+                if msg.get("content") and role=="user":
+                    st.text(msg["content"])
+                if msg.get("content") and role=="assistant":
                     st.markdown(msg["content"])
                 if msg.get("tool_calls"):
                     st.code(str(msg["tool_calls"]))
@@ -67,7 +69,7 @@ render_messages(session.messages)
 if prompt := st.chat_input("Ask something"):
     session.add_user_turn(prompt)
     with st.chat_message("user"):
-        st.markdown(prompt)
+        st.text(prompt)
 
     while True:
         with st.chat_message("assistant"):
