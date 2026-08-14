@@ -76,7 +76,7 @@ def web_fetch(url: str) -> dict:
         # Truncate to a reasonable length for the model
         return {
             "title": url,
-            "content": text[:8000],
+            "content": text,
             "links": [],
         }
     except Exception as exc:
