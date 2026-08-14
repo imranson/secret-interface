@@ -96,6 +96,6 @@ if prompt := st.chat_input("Ask something"):
             for event in session.run_tool_turn():
                 tool_expander = st.expander(f"{event['name']}({event['arguments']})").empty()
                 if event["type"] == "tool_result":
-                    tool_expander.code(f"{event['content']}", wrap_lines=True)
+                    tool_expander.code(f"{event['result']}", wrap_lines=True)
 
     st.rerun() # refresh
