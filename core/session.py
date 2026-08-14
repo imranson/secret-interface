@@ -65,7 +65,7 @@ class ChatSession:
                 "type": "tool_result",
                 "name": tc["function"]["name"],
                 "arguments": tc["function"]["arguments"],
-                "result": msg["content"],
+                "content": msg["content"],
             }
 
     def add_user_turn(self, prompt: str) -> None:
@@ -136,4 +136,4 @@ if __name__ == "__main__":
             break
 
         for event in session.run_tool_turn():
-            print(f"Tool {event['name']}({event['arguments']}): {event['result']}")
+            print(f"Tool {event['name']}({event['arguments']}): {event['content']}")

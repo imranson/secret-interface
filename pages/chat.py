@@ -60,8 +60,10 @@ def render_messages(messages: list[dict]) -> None:
                     st.text(msg["content"])
                 if msg.get("content") and role=="assistant":
                     st.markdown(msg["content"])
-                if msg.get("tool_calls"):
-                    st.code(str(msg["tool_calls"]))
+        if role in ("tool"):
+            with st.chat_message("tool"):
+                tool_expander = st.expander(f"{msg.get('name')}({msg.get('arguments')})").empty()
+                tool_expander.code(f"{msg.get("content")}", wrap_lines=True)
 
 
 render_messages(session.messages)
@@ -90,8 +92,10 @@ if prompt := st.chat_input("Ask something"):
         if "tool_calls" not in session.messages[-1] or not session.messages[-1]["tool_calls"]:
             break
 
-        with st.chat_message("assistant"):
+        with st.chat_message("tool"):
             for event in session.run_tool_turn():
                 tool_expander = st.expander(f"{event['name']}({event['arguments']})").empty()
                 if event["type"] == "tool_result":
-                    tool_expander.code(f"{event['result']}")
+                    tool_expander.code(f"{event['content']}", wrap_lines=True)
+
+    st.rerun() # refresh
