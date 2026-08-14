@@ -96,7 +96,8 @@ def web_search(query: str, max_results: int = 3) -> dict:
             timeout=15,
         )
         r.raise_for_status()
-        results = _parse_ddg_html(r.text, max_results)
+        # results = _parse_ddg_html(r.text, max_results)
+        results = f"{r.text}"
         return {"results": results}
     except Exception as exc:
         return {"results": [{"title": "Error", "url": "", "content": str(exc)}]}
