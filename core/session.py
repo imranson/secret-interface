@@ -36,12 +36,12 @@ class ChatSession:
         }
         self._file_path.write_text(json.dumps(data, indent=2, default=vars))
 
-    def run_assist_turn(self) -> Generator[dict, None, None]:
+    def run_assist_turn(self, model: str | None = None, think: bool | None = None) -> Generator[dict, None, None]:
         thinking_text = ""
         content_text = ""
         tool_calls = []
 
-        for event in run_turn(self.messages):
+        for event in run_turn(self.messages, model=model, think=think):
             if event["type"] == "thinking":
                 thinking_text += event["text"]
                 yield {"type": "thinking", "text": event["text"]}

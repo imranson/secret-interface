@@ -131,12 +131,12 @@ TOOL_SCHEMAS = [
     },
 ]
 
-def run_turn(messages: list[dict], model: str | None = None):
+def run_turn(messages: list[dict], model: str | None = None, think: bool | None = None):
     stream = CLIENT.chat(
         model=model or MODEL,
         messages=[{"role": "system", "content": _SYSTEM_PROMPT}] + messages,
         tools=TOOL_SCHEMAS,
-        options={"think": THINKING},
+        think=THINKING if think is None else think,
         stream=STREAM,
     )
 
@@ -171,7 +171,9 @@ def execute_tool_calls(messages: list[dict], tool_calls: list[dict]) -> None:
 
 
 def build_assistant_message(content_text: str, thinking_text: str, tool_calls: list[dict]) -> dict:
-    msg = {"role": "assistant", "content": content_text, "thinking": thinking_text}
+    msg = {"role": "assistant", "content": content_text}
+    if thinking_text:
+        msg["thinking"] = thinking_text
     if tool_calls:
         msg["tool_calls"] = tool_calls
     return msg

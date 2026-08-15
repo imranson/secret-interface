@@ -17,7 +17,8 @@ with st.sidebar:
         st.session_state.session = ChatSession()
         st.rerun()
 
-    model.MODEL = st.text_input("Model", value=model.MODEL)
+    model_name = st.text_input("Model", value=model.MODEL)
+    thinking = st.checkbox("Thinking", value=model.THINKING)
 
     st.caption(f"Tokens: {estimate_tokens(session.messages):,}")
     st.divider()
@@ -101,7 +102,7 @@ if prompt := st.chat_input("Ask something"):
             thinking_text = ""
             content_text = ""
 
-            for event in session.run_assist_turn():
+            for event in session.run_assist_turn(model=model_name, think=thinking):
                 if event["type"] == "thinking":
                     thinking_text += event["text"]
                     thinking_placeholder.code(thinking_text)
