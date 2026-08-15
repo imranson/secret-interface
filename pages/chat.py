@@ -86,7 +86,7 @@ def render_messages(messages: list[dict]) -> None:
             if msg.get("content"):
                 render_blob(role, msg["content"], "text")
         if role == "tool":
-            render_expander(role, f"{msg.get('name')}({msg.get('arguments')})", f"{msg.get("content")}", "code")
+            render_expander(role, f"{msg.get('name')}({msg.get('arguments')})", f"{msg.get('content')}", "code")
 
 render_messages(session.messages)
 
