@@ -1,7 +1,12 @@
 import streamlit as st
 from core.session import ChatSession, list_conversations, archive_conversation
+from core.tokens import estimate_tokens
 
 st.set_page_config(page_title="Agent Chat", layout="wide")
+
+if "session" not in st.session_state:
+    st.session_state.session = ChatSession()
+session = st.session_state.session
 
 # ---- Sidebar ----
 with st.sidebar:
@@ -11,6 +16,7 @@ with st.sidebar:
         st.session_state.session = ChatSession()
         st.rerun()
 
+    st.caption(f"Tokens: {estimate_tokens(session.messages):,}")
     st.divider()
 
     conversations = list_conversations()
@@ -39,6 +45,7 @@ with st.sidebar:
 
     if not conversations:
         st.caption("No saved chats yet.")
+
 
 # ---- Main ----
 st.title("Agent Chat")
@@ -76,10 +83,6 @@ def render_messages(messages: list[dict]) -> None:
                 render_blob(role, msg["content"], "text")
         if role == "tool":
             render_expander(role, f"{msg.get('name')}({msg.get('arguments')})", f"{msg.get("content")}", "code")
-
-if "session" not in st.session_state:
-    st.session_state.session = ChatSession()
-session = st.session_state.session
 
 render_messages(session.messages)
 
