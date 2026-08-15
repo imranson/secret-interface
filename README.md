@@ -5,6 +5,8 @@ AI-native applications for personal use (not confined to chat interface). Might 
 
 ## Setup
 
+Requires Python 3.10+ (the code uses `str | None` union type syntax).
+
 Use the `secret-interface` conda environment:
 
 ```bash
