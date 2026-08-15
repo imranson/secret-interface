@@ -109,4 +109,4 @@ if prompt := st.chat_input("Ask something"):
         for event in session.run_tool_turn():
             render_expander("tool", f"{event['name']}({event['arguments']})", f"{event['content']}", "code")
 
-    st.rerun() # refresh
+    st.rerun() # after

@@ -7,7 +7,6 @@ import ollama
 
 MODEL = "glm-5.2:cloud"
 
-
 def _get_secret(name: str, default: str = "") -> str:
     """Read a config value from Streamlit secrets, falling back to env vars."""
     try:
@@ -19,11 +18,10 @@ def _get_secret(name: str, default: str = "") -> str:
         pass
     return os.getenv(name, default)
 
-
 OLLAMA_HOST = _get_secret("OLLAMA_HOST", "https://ollama.com")
 OLLAMA_API_KEY = _get_secret("OLLAMA_API_KEY")
 
-client = ollama.Client(
+CLIENT = ollama.Client(
     host=OLLAMA_HOST,
     headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"} if OLLAMA_API_KEY else None,
 )
@@ -45,8 +43,8 @@ def get_current_datetime() -> str:
 TOOLS = {
     "add": add,
     "multiply": multiply,
-    "web_search": client.web_search,
-    "web_fetch": client.web_fetch,
+    "web_search": CLIENT.web_search,
+    "web_fetch": CLIENT.web_fetch,
     "get_current_datetime": get_current_datetime,
 }
 
@@ -134,7 +132,7 @@ TOOL_SCHEMAS = [
 ]
 
 def run_turn(messages: list[dict]):
-    stream = client.chat(
+    stream = CLIENT.chat(
         model=MODEL,
         messages=[{"role": "system", "content": _SYSTEM_PROMPT}] + messages,
         tools=TOOL_SCHEMAS,
