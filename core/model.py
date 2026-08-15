@@ -1,14 +1,37 @@
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
 import ollama
-from ollama import web_fetch, web_search
 
-MODEL = "kimi-k2.6:cloud"
+MODEL = "glm-5.2:cloud"
+
+
+def _get_secret(name: str, default: str = "") -> str:
+    """Read a config value from Streamlit secrets, falling back to env vars."""
+    try:
+        import streamlit as st
+        value = st.secrets.get(name)
+        if value:
+            return value
+    except Exception:
+        pass
+    return os.getenv(name, default)
+
+
+OLLAMA_HOST = _get_secret("OLLAMA_HOST", "https://ollama.com")
+OLLAMA_API_KEY = _get_secret("OLLAMA_API_KEY")
+
+client = ollama.Client(
+    host=OLLAMA_HOST,
+    headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"} if OLLAMA_API_KEY else None,
+)
 
 _PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
 _SYSTEM_PROMPT = (_PROMPT_DIR / "default-system-prompt-1.md").read_text()
+THINKING = True
+STREAM = True
 
 def add(a: float, b: float) -> float:
     return a + b
@@ -22,8 +45,8 @@ def get_current_datetime() -> str:
 TOOLS = {
     "add": add,
     "multiply": multiply,
-    "web_search": web_search,
-    "web_fetch": web_fetch,
+    "web_search": client.web_search,
+    "web_fetch": client.web_fetch,
     "get_current_datetime": get_current_datetime,
 }
 
@@ -111,12 +134,12 @@ TOOL_SCHEMAS = [
 ]
 
 def run_turn(messages: list[dict]):
-    stream = ollama.chat(
+    stream = client.chat(
         model=MODEL,
         messages=[{"role": "system", "content": _SYSTEM_PROMPT}] + messages,
         tools=TOOL_SCHEMAS,
-        options={"think": True},
-        stream=True,
+        options={"think": THINKING},
+        stream=STREAM,
     )
 
     for chunk in stream:
@@ -167,14 +190,10 @@ def run(messages: list[dict], prompt: str) -> list[dict]:
         for event in run_turn(messages):
             if event["type"] == "thinking":
                 thinking_text += event["text"]
-                # print(event["text"], end="", flush=True)
             elif event["type"] == "content":
                 content_text += event["text"]
-                # print(event["text"], end="", flush=True)
             elif event["type"] == "tool_calls":
                 tool_calls.extend(event["tool_calls"])
-
-        # print()  # newline after streaming
 
         assistant_msg = build_assistant_message(content_text, thinking_text, tool_calls)
         messages.append(assistant_msg)
