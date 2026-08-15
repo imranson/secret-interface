@@ -1,6 +1,7 @@
 import streamlit as st
 from core.session import ChatSession, list_conversations, archive_conversation
 from core.tokens import estimate_tokens
+import core.model as model
 
 st.set_page_config(page_title="Agent Chat", layout="wide")
 
@@ -15,6 +16,8 @@ with st.sidebar:
     if st.button("＋ New Chat", use_container_width=True):
         st.session_state.session = ChatSession()
         st.rerun()
+
+    model.MODEL = st.text_input("Model", value=model.MODEL)
 
     st.caption(f"Tokens: {estimate_tokens(session.messages):,}")
     st.divider()

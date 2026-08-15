@@ -131,9 +131,9 @@ TOOL_SCHEMAS = [
     },
 ]
 
-def run_turn(messages: list[dict]):
+def run_turn(messages: list[dict], model: str | None = None):
     stream = CLIENT.chat(
-        model=MODEL,
+        model=model or MODEL,
         messages=[{"role": "system", "content": _SYSTEM_PROMPT}] + messages,
         tools=TOOL_SCHEMAS,
         options={"think": THINKING},
