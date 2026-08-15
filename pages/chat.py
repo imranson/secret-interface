@@ -43,35 +43,49 @@ with st.sidebar:
 # ---- Main ----
 st.title("Agent Chat")
 
-if "session" not in st.session_state:
-    st.session_state.session = ChatSession()
-session = st.session_state.session
 
+def render_blob(role : str, content : str, txt_type : str) -> None:
+    with st.chat_message(role):
+        if txt_type == "text":
+            st.text(content)
+        elif txt_type == "markdown":
+            st.markdown(content)
+        else:
+            st.code(content)
+
+def render_expander(role : str, title : str, content : str, txt_type : str) -> None:
+    with st.chat_message(role):
+        with st.expander(title):
+            if txt_type == "text":
+                st.text(content)
+            elif txt_type == "markdown":
+                st.markdown(content)
+            else:
+                st.code(content, wrap_lines=True)
 
 def render_messages(messages: list[dict]) -> None:
     for msg in messages:
         role = msg["role"]
-        if role in ("user", "assistant"):
-            with st.chat_message(role):
-                if msg.get("thinking"):
-                    with st.expander("Thinking"):
-                        st.code(msg["thinking"])
-                if msg.get("content") and role=="user":
-                    st.text(msg["content"])
-                if msg.get("content") and role=="assistant":
-                    st.markdown(msg["content"])
-        if role in ("tool"):
-            with st.chat_message("tool"):
-                tool_expander = st.expander(f"{msg.get('name')}({msg.get('arguments')})").empty()
-                tool_expander.code(f"{msg.get("content")}", wrap_lines=True)
+        if role == "assistant":
+            if msg.get("thinking"):
+                render_expander(role, "Thinking", msg["thinking"], "code")
+            if msg.get("content"):
+                render_blob(role, msg["content"], "markdown")
+        if role == "user":
+            if msg.get("content"):
+                render_blob(role, msg["content"], "text")
+        if role == "tool":
+            render_expander(role, f"{msg.get('name')}({msg.get('arguments')})", f"{msg.get("content")}", "code")
 
+if "session" not in st.session_state:
+    st.session_state.session = ChatSession()
+session = st.session_state.session
 
 render_messages(session.messages)
 
 if prompt := st.chat_input("Ask something"):
     session.add_user_turn(prompt)
-    with st.chat_message("user"):
-        st.text(prompt)
+    render_blob("user", prompt, "text")
 
     while True:
         with st.chat_message("assistant"):
@@ -92,10 +106,7 @@ if prompt := st.chat_input("Ask something"):
         if "tool_calls" not in session.messages[-1] or not session.messages[-1]["tool_calls"]:
             break
 
-        with st.chat_message("tool"):
-            for event in session.run_tool_turn():
-                tool_expander = st.expander(f"{event['name']}({event['arguments']})").empty()
-                if event["type"] == "tool_result":
-                    tool_expander.code(f"{event['content']}", wrap_lines=True)
+        for event in session.run_tool_turn():
+            render_expander("tool", f"{event['name']}({event['arguments']})", f"{event['content']}", "code")
 
     st.rerun() # refresh
