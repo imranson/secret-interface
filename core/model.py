@@ -37,15 +37,16 @@ def add(a: float, b: float) -> float:
 def multiply(a: float, b: float) -> float:
     return a * b
 
-def get_current_datetime() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def get_current_datetime_with_timezone() -> str:
+    now = datetime.now().astimezone()
+    return now.strftime("%Y-%m-%d %H:%M:%S %Z (UTC%z)")
 
 TOOLS = {
     "add": add,
     "multiply": multiply,
     "web_search": CLIENT.web_search,
     "web_fetch": CLIENT.web_fetch,
-    "get_current_datetime": get_current_datetime,
+    "get_current_datetime_with_timezone": get_current_datetime_with_timezone,
 }
 
 TOOL_SCHEMAS = [
@@ -120,8 +121,8 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "get_current_datetime",
-            "description": "Get the current date and time. Returns a string in YYYY-MM-DD HH:MM:SS format.",
+            "name": "get_current_datetime_with_timezone",
+            "description": "Get the current local date, time, and timezone. Use this when the user asks for the current time, today's date, or their timezone, or when you need a clue about the user's location (the timezone hints at their region). Returns a string like '2026-08-16 17:45:00 BST (UTC+01:00)'.",
             "parameters": {
                 "type": "object",
                 "properties": {},
