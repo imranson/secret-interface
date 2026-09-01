@@ -52,7 +52,7 @@ with st.sidebar:
 
 
 # ---- Main ----
-st.title("Agent Chat")
+st.title("Nice to meet you, stranger")
 
 
 def render_blob(role : str, content : str, txt_type : str) -> None:

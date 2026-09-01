@@ -5,7 +5,7 @@ from pathlib import Path
 
 import ollama
 
-MODEL = "glm-5.2:cloud"
+MODEL = "kimi-k3:cloud"
 
 def _get_secret(name: str, default: str = "") -> str:
     """Read a config value from Streamlit secrets, falling back to env vars."""
