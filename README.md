@@ -1,9 +1,3 @@
-Streamlit app using the Ollama Python SDK. For Ollama Python library references, see `ollama-python-ref/`.
+## Tips For Coders
 
-## Setup
-
-Use the `secret-interface` conda environment:
-
-```bash
-conda activate secret-interface
-```
+For Ollama JS library references, see `ollama-js-ref/`.
