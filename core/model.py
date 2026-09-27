@@ -31,55 +31,55 @@ _SYSTEM_PROMPT = (_PROMPT_DIR / "default-system-prompt-1.md").read_text()
 THINKING = True
 STREAM = True
 
-def add(a: float, b: float) -> float:
-    return a + b
+# def add(a: float, b: float) -> float:
+#     return a + b
 
-def multiply(a: float, b: float) -> float:
-    return a * b
+# def multiply(a: float, b: float) -> float:
+#     return a * b
 
 def get_current_datetime_with_timezone() -> str:
     now = datetime.now().astimezone()
     return now.strftime("%Y-%m-%d %H:%M:%S %Z (UTC%z)")
 
 TOOLS = {
-    "add": add,
-    "multiply": multiply,
+    # "add": add,
+    # "multiply": multiply,
     "web_search": CLIENT.web_search,
     "web_fetch": CLIENT.web_fetch,
     "get_current_datetime_with_timezone": get_current_datetime_with_timezone,
 }
 
 TOOL_SCHEMAS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "add",
-            "description": "Add two numbers",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "a": {"type": "number"},
-                    "b": {"type": "number"},
-                },
-                "required": ["a", "b"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "multiply",
-            "description": "Multiply two numbers",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "a": {"type": "number"},
-                    "b": {"type": "number"},
-                },
-                "required": ["a", "b"],
-            },
-        },
-    },
+    # {
+    #     "type": "function",
+    #     "function": {
+    #         "name": "add",
+    #         "description": "Add two numbers",
+    #         "parameters": {
+    #             "type": "object",
+    #             "properties": {
+    #                 "a": {"type": "number"},
+    #                 "b": {"type": "number"},
+    #             },
+    #             "required": ["a", "b"],
+    #         },
+    #     },
+    # },
+    # {
+    #     "type": "function",
+    #     "function": {
+    #         "name": "multiply",
+    #         "description": "Multiply two numbers",
+    #         "parameters": {
+    #             "type": "object",
+    #             "properties": {
+    #                 "a": {"type": "number"},
+    #                 "b": {"type": "number"},
+    #             },
+    #             "required": ["a", "b"],
+    #         },
+    #     },
+    # },
     {
         "type": "function",
         "function": {
