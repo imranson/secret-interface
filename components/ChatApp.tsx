@@ -321,7 +321,7 @@ export function ChatApp({
 
   const empty = (
     <div className="empty">
-      <h1 className="empty-title">What shall we look into?</h1>
+      <h1 className="empty-title">Nice to meet you, stranger.</h1>
       <p className="empty-sub">Ask anything. I can search the web, read pages, and check today’s date.</p>
     </div>
   )

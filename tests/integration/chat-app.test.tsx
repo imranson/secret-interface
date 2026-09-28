@@ -76,7 +76,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
       ],
     })
     const user = renderApp()
-    expect(await screen.findByRole('heading', { name: 'What shall we look into?' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Nice to meet you, stranger.' })).toBeInTheDocument()
 
     await send(user, 'Show me a table')
     expect(screen.getByText('Show me a table', { selector: '.user-bubble' })).toBeInTheDocument()
@@ -178,7 +178,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     )
 
     await user.click(screen.getByRole('button', { name: /New conversation/ }))
-    expect(screen.getByRole('heading', { name: 'What shall we look into?' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Nice to meet you, stranger.' })).toBeInTheDocument()
     expect(screen.queryByText('An answer about', { exact: false })).not.toBeInTheDocument()
 
     await send(user, 'Brand new topic')
@@ -226,7 +226,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     await screen.findByText('Current one', { selector: '.user-bubble' })
 
     await user.click(within(screen.getByRole('banner')).getByRole('button', { name: /Archive/ }))
-    await screen.findByRole('heading', { name: 'What shall we look into?' })
+    await screen.findByRole('heading', { name: 'Nice to meet you, stranger.' })
     expect(existsSync(path.join(dataDir, 'conversations', 'archived', `${conversation.id}.json`))).toBe(true)
   })
 
