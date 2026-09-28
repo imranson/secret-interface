@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   getConversation,
   getModelInfo,
@@ -11,12 +11,13 @@ import {
 } from '@/lib/api-client'
 import { applyStreamEvent } from '@/lib/chat-reducer'
 import { upsertConversation } from '@/lib/format'
+import { sidebarCookie } from '@/lib/sidebar'
 import { estimateContextTokens, estimateTokens, MESSAGE_OVERHEAD_TOKENS } from '@/lib/tokens'
 import { TOOL_DEFINITIONS } from '@/lib/tool-definitions'
 import { THINK_OPTIONS, type ChatMessage, type ConversationSummary, type ThinkOption } from '@/lib/types'
 import { Composer } from './Composer'
 import { ContextMeter } from './ContextMeter'
-import { ArchiveIcon, MenuIcon, RestoreIcon } from './Icons'
+import { ArchiveIcon, RestoreIcon, SidebarIcon } from './Icons'
 import { MessageList } from './MessageList'
 import { Sidebar, type SidebarView } from './Sidebar'
 
@@ -48,6 +49,22 @@ function writePref(key: string, value: string) {
   }
 }
 
+// The small-screen breakpoint in globals.css, below which the sidebar is a drawer instead of a column.
+const NARROW_SCREEN = '(max-width: 820px)'
+
+function narrowScreenQuery(): MediaQueryList | null {
+  return typeof window.matchMedia === 'function' ? window.matchMedia(NARROW_SCREEN) : null
+}
+
+function subscribeToScreenSize(onChange: () => void) {
+  const query = narrowScreenQuery()
+  query?.addEventListener('change', onChange)
+  return () => query?.removeEventListener('change', onChange)
+}
+
+const isNarrowScreen = () => narrowScreenQuery()?.matches ?? false
+const isNarrowScreenOnServer = () => false
+
 function browserTimeZone(): string | undefined {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -73,13 +90,22 @@ export interface ChatAppProps {
   defaultModel: string
   defaultContextWindow: number
   systemPrompt: string
+  /** Start with the sidebar collapsed on wide screens (restored from a cookie by the page). */
+  sidebarCollapsed?: boolean
 }
 
-export function ChatApp({ defaultModel, defaultContextWindow, systemPrompt }: ChatAppProps) {
+export function ChatApp({
+  defaultModel,
+  defaultContextWindow,
+  systemPrompt,
+  sidebarCollapsed: initiallyCollapsed = false,
+}: ChatAppProps) {
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   const [archivedList, setArchivedList] = useState<ConversationSummary[] | null>(null)
   const [view, setView] = useState<SidebarView>('recent')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(initiallyCollapsed)
+  const narrow = useSyncExternalStore(subscribeToScreenSize, isNarrowScreen, isNarrowScreenOnServer)
   const [current, setCurrent] = useState<CurrentConversation>(NEW_CONVERSATION)
   const [loading, setLoading] = useState(false)
   const [draft, setDraft] = useState('')
@@ -178,6 +204,18 @@ export function ChatApp({ defaultModel, defaultContextWindow, systemPrompt }: Ch
     } finally {
       if (run === runRef.current) setLoading(false)
     }
+  }
+
+  const sidebarVisible = narrow ? sidebarOpen : !sidebarCollapsed
+
+  const toggleSidebar = () => {
+    if (narrow) {
+      setSidebarOpen((open) => !open)
+      return
+    }
+    const collapsed = !sidebarCollapsed
+    setSidebarCollapsed(collapsed)
+    document.cookie = sidebarCookie(collapsed)
   }
 
   const changeView = (next: SidebarView) => {
@@ -298,6 +336,7 @@ export function ChatApp({ defaultModel, defaultContextWindow, systemPrompt }: Ch
         currentId={current.id}
         busyId={streaming ? current.id : null}
         open={sidebarOpen}
+        collapsed={!narrow && sidebarCollapsed}
         onSelect={openConversation}
         onNew={newConversation}
         onArchive={archive}
@@ -309,11 +348,12 @@ export function ChatApp({ defaultModel, defaultContextWindow, systemPrompt }: Ch
         <header className="topbar">
           <button
             type="button"
-            className="icon-button menu-button"
-            aria-label="Show conversations"
-            onClick={() => setSidebarOpen(true)}
+            className="icon-button"
+            aria-label={sidebarVisible ? 'Hide conversations' : 'Show conversations'}
+            title={sidebarVisible ? 'Hide conversations' : 'Show conversations'}
+            onClick={toggleSidebar}
           >
-            <MenuIcon />
+            <SidebarIcon />
           </button>
           <h1 className="topbar-title">{current.title}</h1>
           {current.id &&

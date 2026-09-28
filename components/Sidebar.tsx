@@ -15,7 +15,10 @@ export interface SidebarProps {
   currentId: string | null
   /** Conversation whose reply is streaming; it cannot be archived until the reply finishes. */
   busyId: string | null
+  /** Drawer state on small screens. */
   open: boolean
+  /** Folded out of view on wide screens. */
+  collapsed: boolean
   onSelect: (id: string) => void
   onNew: () => void
   onArchive: (id: string) => void
@@ -23,12 +26,18 @@ export interface SidebarProps {
 }
 
 export function Sidebar(props: SidebarProps) {
-  const { view, conversations, archived, currentId, busyId, open } = props
+  const { view, conversations, archived, currentId, busyId, open, collapsed } = props
   const list = view === 'recent' ? conversations : archived
   const groups = list ? groupByDate(list) : []
 
   return (
-    <aside className="sidebar" data-open={open || undefined} aria-label="Conversation history">
+    <aside
+      className="sidebar"
+      data-open={open || undefined}
+      data-collapsed={collapsed || undefined}
+      inert={collapsed}
+      aria-label="Conversation history"
+    >
       <div className="sidebar-head">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">§</span> secret interface

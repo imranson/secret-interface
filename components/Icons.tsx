@@ -60,9 +60,10 @@ export const ChevronIcon = (p: IconProps) => (
   </Svg>
 )
 
-export const MenuIcon = (p: IconProps) => (
+export const SidebarIcon = (p: IconProps) => (
   <Svg {...p}>
-    <path d="M4 7h16M4 12h16M4 17h16" />
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M9 4v16" />
   </Svg>
 )
 

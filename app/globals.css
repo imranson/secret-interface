@@ -99,7 +99,7 @@ button:disabled {
 
 .app {
   display: grid;
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
   height: 100dvh;
   overflow: hidden;
 }
@@ -116,7 +116,7 @@ button:disabled {
   align-items: center;
   gap: 12px;
   height: 52px;
-  padding: 0 16px 0 20px;
+  padding: 0 16px 0 12px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -149,10 +149,6 @@ button:disabled {
 
 .icon-button:disabled {
   opacity: 0.35;
-}
-
-.icon-button.menu-button {
-  display: none;
 }
 
 .ghost-button {
@@ -190,6 +186,7 @@ button:disabled {
 .sidebar {
   display: flex;
   flex-direction: column;
+  width: var(--sidebar-width);
   min-height: 0;
   background: var(--panel);
   border-right: 1px solid var(--border);
@@ -337,6 +334,20 @@ button:disabled {
 
 .scrim {
   display: none;
+}
+
+@media (min-width: 821px) {
+  /* Slides out to the left; the negative margin shrinks its grid column to nothing. */
+  .sidebar {
+    transition:
+      margin-left 0.2s ease,
+      visibility 0.2s;
+  }
+
+  .sidebar[data-collapsed] {
+    margin-left: calc(-1 * var(--sidebar-width));
+    visibility: hidden;
+  }
 }
 
 /* ---------- Messages ---------- */
@@ -1000,10 +1011,6 @@ button:disabled {
     inset: 0;
     z-index: 10;
     background: rgb(0 0 0 / 0.3);
-  }
-
-  .icon-button.menu-button {
-    display: inline-grid;
   }
 
   .topbar {

@@ -23,6 +23,7 @@ function setup(overrides: Partial<SidebarProps> = {}) {
     currentId: 'b',
     busyId: null,
     open: false,
+    collapsed: false,
     onSelect: vi.fn(),
     onNew: vi.fn(),
     onArchive: vi.fn(),
@@ -75,5 +76,19 @@ describe('<Sidebar>', () => {
   it('shows an empty archive message', () => {
     setup({ view: 'archived', archived: [] })
     expect(screen.getByText('Nothing archived.')).toBeInTheDocument()
+  })
+
+  it('is interactive while expanded', () => {
+    setup()
+    const aside = screen.getByRole('complementary', { name: 'Conversation history' })
+    expect(aside).not.toHaveAttribute('inert')
+    expect(aside).not.toHaveAttribute('data-collapsed')
+  })
+
+  it('takes itself out of the tab order and accessibility tree while collapsed', () => {
+    setup({ collapsed: true })
+    const aside = screen.getByRole('complementary', { name: 'Conversation history' })
+    expect(aside).toHaveAttribute('inert')
+    expect(aside).toHaveAttribute('data-collapsed')
   })
 })

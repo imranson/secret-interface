@@ -5,7 +5,7 @@ import path from 'node:path'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ChatApp } from '@/components/ChatApp'
+import { ChatApp, type ChatAppProps } from '@/components/ChatApp'
 import { clearModelCaches } from '@/lib/models'
 import { DEFAULT_SYSTEM_PROMPT } from '@/lib/prompts'
 import { getStore } from '@/lib/store'
@@ -31,6 +31,7 @@ beforeEach(async () => {
   holder.fake = createFakeOllama()
   clearModelCaches()
   window.localStorage.clear()
+  document.cookie = 'secret-interface.sidebar=; path=/; max-age=0'
 })
 
 afterEach(async () => {
@@ -38,9 +39,11 @@ afterEach(async () => {
   await cleanup()
 })
 
-function renderApp() {
+function renderApp(props: Partial<ChatAppProps> = {}) {
   const user = userEvent.setup()
-  render(<ChatApp defaultModel="kimi-k2.6" defaultContextWindow={128000} systemPrompt={DEFAULT_SYSTEM_PROMPT} />)
+  render(
+    <ChatApp defaultModel="kimi-k2.6" defaultContextWindow={128000} systemPrompt={DEFAULT_SYSTEM_PROMPT} {...props} />,
+  )
   return user
 }
 
@@ -274,5 +277,47 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     await screen.findByText('From gpt-oss.')
     expect(holder.fake!.requests[0].model).toBe('gpt-oss:120b')
     expect(window.localStorage.getItem('secret-interface.model')).toBe('gpt-oss:120b')
+  })
+
+  it('collapses and expands the sidebar, remembering the choice in a cookie', async () => {
+    await seedConversation('Kept safe')
+    const user = renderApp()
+    await within(sidebar()).findByRole('button', { name: 'Kept safe' })
+
+    await user.click(screen.getByRole('button', { name: 'Hide conversations' }))
+    expect(sidebar()).toHaveAttribute('inert')
+    expect(document.cookie).toContain('secret-interface.sidebar=collapsed')
+
+    await user.click(screen.getByRole('button', { name: 'Show conversations' }))
+    expect(sidebar()).not.toHaveAttribute('inert')
+    expect(within(sidebar()).getByRole('button', { name: 'Kept safe' })).toBeInTheDocument()
+    expect(document.cookie).toContain('secret-interface.sidebar=expanded')
+  })
+
+  it('starts collapsed when the page restores that preference', () => {
+    renderApp({ sidebarCollapsed: true })
+    expect(sidebar()).toHaveAttribute('inert')
+    expect(screen.getByRole('button', { name: 'Show conversations' })).toBeInTheDocument()
+  })
+
+  it('uses a drawer on small screens and leaves the wide-screen preference alone', async () => {
+    vi.stubGlobal('matchMedia', (media: string) => ({
+      media,
+      matches: media === '(max-width: 820px)',
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }))
+    await seedConversation('On the go')
+    const user = renderApp({ sidebarCollapsed: true })
+
+    // Collapsing only applies to wide screens; the drawer starts closed.
+    expect(sidebar()).not.toHaveAttribute('inert')
+    expect(sidebar()).not.toHaveAttribute('data-open')
+
+    await user.click(screen.getByRole('button', { name: 'Show conversations' }))
+    expect(sidebar()).toHaveAttribute('data-open')
+    await user.click(await within(sidebar()).findByRole('button', { name: 'On the go' }))
+    await waitFor(() => expect(sidebar()).not.toHaveAttribute('data-open'))
+    expect(document.cookie).not.toContain('secret-interface.sidebar')
   })
 })

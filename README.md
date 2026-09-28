@@ -9,7 +9,7 @@ A chat client for Ollama **cloud** models, built with Next.js, TypeScript, the O
 - Thinking control (auto / off / on / low / medium / high), falling back automatically for models without thinking
 - Tools: `web_search` and `web_fetch` (Ollama web API) plus `get_current_datetime` (uses the browser's time zone)
 - Default system prompt (`lib/prompts.ts`, override with `SYSTEM_PROMPT`)
-- Conversation history with a new-conversation button and model picker
+- Conversation history with a new-conversation button and model picker; the sidebar collapses from the top bar (remembered in a cookie)
 - Rough context-window meter (~4 chars/token against the model's context length from `/api/show`)
 - Archive / restore: moves files between `data/conversations/` and `data/conversations/archived/`
 
