@@ -1,10 +1,12 @@
-
 .env
 .env*.local
 /node_modules/
+/.next/
+/coverage/
+*.tsbuildinfo
+next-env.d.ts
 
 /data/
 
 /ollama-js-ref/
 .DS_Store
-
