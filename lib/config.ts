@@ -12,7 +12,6 @@ export interface AppConfig {
   contextWindow: number
   dataDir: string
   systemPrompt: string
-  maxToolRounds: number
 }
 
 type Env = Record<string, string | undefined>
@@ -57,6 +56,5 @@ export function getConfig(env: Env = process.env): AppConfig {
     // Resolved at runtime; not a build-time file dependency.
     dataDir: path.resolve(/*turbopackIgnore: true*/ process.cwd(), clean(env.DATA_DIR) ?? 'data'),
     systemPrompt: clean(env.SYSTEM_PROMPT) ?? DEFAULT_SYSTEM_PROMPT,
-    maxToolRounds: positiveInt(env.MAX_TOOL_ROUNDS, 8),
   }
 }

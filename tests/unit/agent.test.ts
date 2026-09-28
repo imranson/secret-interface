@@ -136,27 +136,6 @@ describe('runAgent', () => {
     expect(output[1]).toMatchObject({ role: 'tool', tool_error: true })
   })
 
-  it('forces a final answer without tools after the tool-round limit', async () => {
-    const fake = createFakeOllama([
-      { chunks: [chunk.toolCall('web_search', { query: 'a' }), chunk.done()] },
-      { chunks: [chunk.toolCall('web_search', { query: 'b' }), chunk.done()] },
-      { chunks: [chunk.content('Final answer.'), chunk.done()] },
-    ])
-    const { output } = await run(fake, { maxToolRounds: 2 })
-    expect(fake.requests.map((r) => Boolean(r.tools))).toEqual([true, true, false])
-    expect(output.at(-1)).toMatchObject({ role: 'assistant', content: 'Final answer.' })
-  })
-
-  it('stops with a notice if the model still calls tools after the limit', async () => {
-    const fake = createFakeOllama([
-      { chunks: [chunk.toolCall('web_search', { query: 'a' }), chunk.done()] },
-      { chunks: [chunk.toolCall('web_search', { query: 'b' }), chunk.done()] },
-    ])
-    const { events } = await run(fake, { maxToolRounds: 1 })
-    expect(fake.client.chat).toHaveBeenCalledTimes(2)
-    expect(events.at(-1)).toEqual({ type: 'notice', message: 'Tool-call limit reached; the model tried to call more tools.' })
-  })
-
   it('retries without thinking when the model does not support it', async () => {
     const fake = createFakeOllama([
       { error: new HttpError('"test-model" does not support thinking', 400) },

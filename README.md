@@ -30,7 +30,6 @@ npm run dev        # http://localhost:3000
 | `OLLAMA_CONTEXT_WINDOW` | Fallback context size for the meter | `128000` |
 | `DATA_DIR` | Where conversations are stored | `data` |
 | `SYSTEM_PROMPT` | Replaces the default system prompt | – |
-| `MAX_TOOL_ROUNDS` | Tool-calling turns before a final answer is forced | `8` |
 
 ## Tests
 

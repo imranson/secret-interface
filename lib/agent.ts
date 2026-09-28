@@ -19,8 +19,6 @@ export interface RunAgentOptions {
   tools?: Tool[]
   timeZone?: string
   signal?: AbortSignal
-  /** Maximum model turns that may request tools before a final tool-less answer is forced. */
-  maxToolRounds?: number
   /**
    * Receives the assistant and tool messages as they are produced (assistant messages are filled in
    * while streaming), so callers can persist partial output if the run is aborted or fails.
@@ -57,19 +55,16 @@ export function isEmptyMessage(message: ChatMessage): boolean {
  */
 export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEvent> {
   const { client, model, signal, output } = opts
-  const maxToolRounds = opts.maxToolRounds ?? 8
   let think = thinkParam(opts.think)
   let tools = opts.tools ?? TOOL_DEFINITIONS
-  let toolRounds = 0
 
   while (!signal?.aborted) {
-    const offerTools = tools.length > 0 && toolRounds < maxToolRounds
     const request: ChatRequest & { stream: true } = {
       model,
       messages: toOllamaMessages(opts.systemPrompt, [...opts.history, ...output]),
       stream: true,
       ...(think !== undefined && { think }),
-      ...(offerTools && { tools }),
+      ...(tools.length > 0 && { tools }),
     }
     const assistant: ChatMessage = { role: 'assistant', content: '', created_at: new Date().toISOString(), model }
 
@@ -126,11 +121,6 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
 
     const calls = assistant.tool_calls ?? []
     if (calls.length === 0 || signal?.aborted) return
-    if (!offerTools) {
-      yield { type: 'notice', message: 'Tool-call limit reached; the model tried to call more tools.' }
-      return
-    }
-    toolRounds++
 
     // Run this turn's tools concurrently but report results in call order. Results are recorded even
     // if the run is aborted meanwhile, so the saved history never has unanswered tool calls.

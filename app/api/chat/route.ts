@@ -81,7 +81,6 @@ export async function POST(request: Request) {
           think: body.think,
           timeZone,
           signal: abort.signal,
-          maxToolRounds: config.maxToolRounds,
           output: produced,
         })) {
           send(event)

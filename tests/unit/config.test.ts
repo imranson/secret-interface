@@ -33,7 +33,6 @@ describe('getConfig', () => {
     expect(config.contextWindow).toBe(FALLBACK_CONTEXT_WINDOW)
     expect(config.dataDir).toBe(path.resolve('data'))
     expect(config.systemPrompt).toBe(DEFAULT_SYSTEM_PROMPT)
-    expect(config.maxToolRounds).toBe(8)
   })
 
   it('reads and cleans environment values', () => {
@@ -44,7 +43,6 @@ describe('getConfig', () => {
       OLLAMA_CONTEXT_WINDOW: '256000',
       DATA_DIR: '/tmp/somewhere',
       SYSTEM_PROMPT: 'Be brief.',
-      MAX_TOOL_ROUNDS: '3',
     })
     expect(config).toMatchObject({
       apiKey: 'key',
@@ -53,14 +51,12 @@ describe('getConfig', () => {
       contextWindow: 256000,
       dataDir: '/tmp/somewhere',
       systemPrompt: 'Be brief.',
-      maxToolRounds: 3,
     })
   })
 
   it('ignores blank or invalid numbers', () => {
-    const config = getConfig({ OLLAMA_API_KEY: '   ', OLLAMA_CONTEXT_WINDOW: 'lots', MAX_TOOL_ROUNDS: '-2' })
+    const config = getConfig({ OLLAMA_API_KEY: '   ', OLLAMA_CONTEXT_WINDOW: 'lots' })
     expect(config.apiKey).toBeUndefined()
     expect(config.contextWindow).toBe(FALLBACK_CONTEXT_WINDOW)
-    expect(config.maxToolRounds).toBe(8)
   })
 })
