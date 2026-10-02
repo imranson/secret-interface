@@ -1,6 +1,7 @@
+import { Worker } from 'node:worker_threads'
 import type { WebFetchResponse, WebSearchRequest } from 'ollama'
 import type { OllamaClient } from './ollama'
-import { GET_CURRENT_DATETIME, TOOL_DEFINITIONS, WEB_FETCH, WEB_SEARCH } from './tool-definitions'
+import { CALCULATE, GET_CURRENT_DATETIME, TOOL_DEFINITIONS, WEB_FETCH, WEB_SEARCH } from './tool-definitions'
 import type { ToolCallRecord } from './types'
 
 export { TOOL_DEFINITIONS }
@@ -9,6 +10,9 @@ export { TOOL_DEFINITIONS }
 export const MAX_TOOL_OUTPUT_CHARS = 12_000
 const MAX_SEARCH_EXCERPT_CHARS = 2_000
 const MAX_FETCH_LINKS = 25
+/** Limits for one calculation, so runaway expressions such as `zeros(1e5, 1e5)` can't hang or crash the server. */
+export const CALCULATION_TIMEOUT_MS = 5_000
+const CALCULATION_MEMORY_MB = 256
 
 export interface ToolContext {
   client: Pick<OllamaClient, 'webSearch' | 'webFetch'>
@@ -140,6 +144,54 @@ function datetime(args: Record<string, unknown>, ctx: ToolContext): string {
   return JSON.stringify(currentDateTime(requested || fallback, ctx.now?.() ?? new Date()), null, 2)
 }
 
+// Runs in a fresh worker per call: expressions such as `config(...)` and `createUnit(...)` mutate the math.js
+// instance, and a worker can be killed when it runs too long or out of memory. Kept as plain source so the
+// bundler leaves it alone. Plain numbers are shown to 15 significant digits (hiding float noise such as
+// 0.1 + 0.2), bignumbers in full.
+const CALCULATOR_WORKER = `
+const { parentPort, workerData } = require('node:worker_threads')
+const math = require('mathjs')
+const formatNumber = (n) =>
+  typeof n === 'number'
+    ? Number.isSafeInteger(n) ? String(n) : math.format(n, { precision: 15, lowerExp: -7, upperExp: 15 })
+    : math.format(n, { lowerExp: -7, upperExp: 64 })
+try {
+  const result = math.evaluate(workerData)
+  const values = math.isResultSet(result) ? result.entries : [result]
+  parentPort.postMessage({ lines: values.filter((v) => v !== undefined).map((v) => math.format(v, formatNumber)) })
+} catch (error) {
+  parentPort.postMessage({ error: error.message })
+}
+`
+
+function calculate(args: Record<string, unknown>): Promise<string> {
+  const expression = requireString(args, 'expression')
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(CALCULATOR_WORKER, {
+      eval: true,
+      workerData: expression,
+      resourceLimits: { maxOldGenerationSizeMb: CALCULATION_MEMORY_MB },
+    })
+    const timer = setTimeout(() => {
+      reject(new Error(`Calculation took longer than ${CALCULATION_TIMEOUT_MS / 1000}s and was stopped`))
+      void worker.terminate()
+    }, CALCULATION_TIMEOUT_MS)
+    worker.once('message', ({ lines, error }: { lines?: string[]; error?: string }) => {
+      if (error !== undefined || !lines) reject(new Error(error))
+      else if (lines.length === 0) resolve('No result (every statement ended with ";").')
+      else resolve(truncate(lines.join('\n'), MAX_TOOL_OUTPUT_CHARS))
+    })
+    worker.once('error', (error: Error & { code?: string }) => {
+      reject(error.code === 'ERR_WORKER_OUT_OF_MEMORY' ? new Error('Calculation ran out of memory and was stopped') : error)
+    })
+    // Settles nothing if a result or error came first.
+    worker.once('exit', () => {
+      clearTimeout(timer)
+      reject(new Error('Calculation stopped unexpectedly'))
+    })
+  })
+}
+
 export async function executeTool(call: ToolCallRecord, ctx: ToolContext): Promise<ToolResult> {
   const name = call.function?.name
   const args = parseToolArguments(call.function?.arguments)
@@ -151,6 +203,8 @@ export async function executeTool(call: ToolCallRecord, ctx: ToolContext): Promi
         return { content: await webFetch(args, ctx) }
       case GET_CURRENT_DATETIME:
         return { content: datetime(args, ctx) }
+      case CALCULATE:
+        return { content: await calculate(args) }
       default:
         return {
           content: `Error: unknown tool "${name}". Available tools: ${TOOL_DEFINITIONS.map((t) => t.function.name).join(', ')}.`,

@@ -6,6 +6,7 @@ import type { Tool } from 'ollama'
 export const WEB_SEARCH = 'web_search'
 export const WEB_FETCH = 'web_fetch'
 export const GET_CURRENT_DATETIME = 'get_current_datetime'
+export const CALCULATE = 'calculate'
 
 export const TOOL_DEFINITIONS: Tool[] = [
   {
@@ -51,6 +52,30 @@ export const TOOL_DEFINITIONS: Tool[] = [
           timezone: {
             type: 'string',
             description: 'Optional IANA time zone such as "Europe/London" or "America/New_York".',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: CALCULATE,
+      description:
+        'Evaluate a math expression with the math.js parser. Use it for any non-trivial arithmetic instead of ' +
+        'calculating in your head. Supports arithmetic, functions (sqrt, log = natural log, log10, sin with ' +
+        'radians or "30 deg", factorial, gcd, combinations…), constants (pi, e, i), complex numbers, matrices ' +
+        '([1, 2; 3, 4], det, inv), units ("5 cm to inch"), statistics (mean, median, std), exact fractions ' +
+        '(fraction(1, 3)), high precision (bignumber("2")^100), variables and functions (a = 3; f(x) = x^2; ' +
+        'f(a)) and symbolic derivative("x^2", "x") / simplify("2x + 3x").',
+      parameters: {
+        type: 'object',
+        required: ['expression'],
+        properties: {
+          expression: {
+            type: 'string',
+            description:
+              'The expression. Put several on separate lines to get each result; a statement ending in ";" is evaluated without showing its result.',
           },
         },
       },

@@ -15,6 +15,7 @@
     "test:live": "LIVE=1 vitest run tests/live"
   },
   "dependencies": {
+    "mathjs": "^15.2.0",
     "next": "^16.3.6",
     "ollama": "^0.6.3",
     "react": "^19.3.0",

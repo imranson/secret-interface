@@ -1,13 +1,20 @@
 import { describe, expect, it, vi } from 'vitest'
-import { GET_CURRENT_DATETIME, TOOL_DEFINITIONS, WEB_FETCH, WEB_SEARCH } from '@/lib/tool-definitions'
-import { currentDateTime, executeTool, MAX_TOOL_OUTPUT_CHARS, parseToolArguments, truncate } from '@/lib/tools'
+import { CALCULATE, GET_CURRENT_DATETIME, TOOL_DEFINITIONS, WEB_FETCH, WEB_SEARCH } from '@/lib/tool-definitions'
+import {
+  CALCULATION_TIMEOUT_MS,
+  currentDateTime,
+  executeTool,
+  MAX_TOOL_OUTPUT_CHARS,
+  parseToolArguments,
+  truncate,
+} from '@/lib/tools'
 import { createFakeOllama } from '../helpers/fake-ollama'
 
 const call = (name: string, args: unknown) => ({ function: { name, arguments: args as Record<string, unknown> } })
 
 describe('tool definitions', () => {
-  it('exposes web search, web fetch and datetime tools', () => {
-    expect(TOOL_DEFINITIONS.map((t) => t.function.name)).toEqual([WEB_SEARCH, WEB_FETCH, GET_CURRENT_DATETIME])
+  it('exposes web search, web fetch, datetime and calculator tools', () => {
+    expect(TOOL_DEFINITIONS.map((t) => t.function.name)).toEqual([WEB_SEARCH, WEB_FETCH, GET_CURRENT_DATETIME, CALCULATE])
     for (const tool of TOOL_DEFINITIONS) {
       expect(tool.type).toBe('function')
       expect(tool.function.description).toBeTruthy()
@@ -161,13 +168,67 @@ describe('get_current_datetime', () => {
   })
 })
 
+// Each call spawns a worker, which can be slow while the whole suite runs in parallel.
+describe('calculate', { timeout: 30_000 }, () => {
+  const { client } = createFakeOllama()
+  const calc = async (expression: unknown) => executeTool(call(CALCULATE, { expression }), { client })
+
+  it.each([
+    ['2 + 3 * 4', '14'],
+    ['0.1 + 0.2', '0.3'],
+    ['1 / 3', '0.333333333333333'],
+    ['2^53 - 1', '9007199254740991'],
+    ['2^64', '1.84467440737096e+19'],
+    ['bignumber(2)^64', '18446744073709551616'],
+    ['sqrt(-4)', '2i'],
+    ['sin(30 deg)', '0.5'],
+    ['5 cm to inch', '1.96850393700787 inch'],
+    ['det([1, 2; 3, 4])', '-2'],
+    ['[1, 2, 3] * 2', '[2, 4, 6]'],
+    ['fraction(1, 3) + fraction(1, 6)', '1/2'],
+    ['mean([1, 2, 3, 4])', '2.5'],
+    ['derivative("x^2", "x")', '2 * x'],
+    ['1 / 0', 'Infinity'],
+  ])('evaluates %s', async (expression, expected) => {
+    expect(await calc(expression)).toEqual({ content: expected })
+  })
+
+  it('returns one line per visible statement, hiding ones ending in ";"', async () => {
+    expect((await calc('a = 3; b = 4;\nsqrt(a^2 + b^2)\nf(x) = x^2; f(b)')).content).toBe('5\n16')
+    expect((await calc('x = 2;')).content).toBe('No result (every statement ended with ";").')
+  })
+
+  it('does not leak state between calls', async () => {
+    await calc('createUnit("smoot", "1.7018 m"); config({number: "BigNumber"}); y = 5')
+    expect((await calc('pi')).content).toBe('3.14159265358979')
+    expect(await calc('y')).toEqual({ content: 'Error: Undefined symbol y', error: true })
+    expect((await calc('1 smoot')).error).toBe(true)
+  })
+
+  it('reports parse errors and missing expressions', async () => {
+    expect(await calc('2 +')).toEqual({ content: 'Error: Unexpected end of expression (char 4)', error: true })
+    expect(await calc('  ')).toEqual({ content: 'Error: "expression" is required', error: true })
+  })
+
+  it('stops calculations that use too much memory', async () => {
+    expect(await calc('zeros(1e5, 1e5)')).toEqual({ content: 'Error: Calculation ran out of memory and was stopped', error: true })
+  })
+
+  it('stops calculations that take too long', async () => {
+    expect(await calc('f(n) = n < 2 ? n : f(n - 1) + f(n - 2); f(40)')).toEqual({
+      content: `Error: Calculation took longer than ${CALCULATION_TIMEOUT_MS / 1000}s and was stopped`,
+      error: true,
+    })
+  })
+})
+
 describe('unknown tools', () => {
   it('returns an error listing the available tools', async () => {
     const { client } = createFakeOllama()
     const result = await executeTool(call('launch_rockets', {}), { client })
     expect(result.error).toBe(true)
     expect(result.content).toContain('unknown tool "launch_rockets"')
-    expect(result.content).toContain('web_search, web_fetch, get_current_datetime')
+    expect(result.content).toContain('web_search, web_fetch, get_current_datetime, calculate')
   })
 
   it('accepts string-encoded arguments', async () => {

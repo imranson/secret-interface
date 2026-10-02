@@ -11,6 +11,8 @@ describe('describeToolCall', () => {
     expect(describeToolCall('web_fetch', { url: 'https://www.bbc.co.uk/news' }, false).label).toBe('Read bbc.co.uk')
     expect(describeToolCall('web_fetch', { url: 'bad' }, true).label).toBe('Reading bad')
     expect(describeToolCall('get_current_datetime', {}, false).label).toBe('Checked the date and time')
+    expect(describeToolCall('calculate', { expression: 'a = 2;\n  a^10' }, true).label).toBe('Calculating a = 2; a^10')
+    expect(describeToolCall('calculate', { expression: '2^10' }, false).label).toBe('Calculated 2^10')
     expect(describeToolCall('other', {}, true).label).toBe('Calling other')
   })
 })

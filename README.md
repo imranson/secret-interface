@@ -7,7 +7,7 @@ A chat client for Ollama **cloud** models, built with Next.js, TypeScript, the O
 - Streaming chat: thinking tokens, answer tokens and tool calls stream live over NDJSON
 - Assistant replies rendered as GitHub-flavoured Markdown in Source Serif 4
 - Thinking control (auto / off / on / low / medium / high), falling back automatically for models without thinking
-- Tools: `web_search` and `web_fetch` (Ollama web API) plus `get_current_datetime` (uses the browser's time zone)
+- Tools: `web_search` and `web_fetch` (Ollama web API), `get_current_datetime` (uses the browser's time zone) and `calculate` ([math.js](https://mathjs.org) expressions, run in a throwaway worker capped at 5s and 256 MB)
 - Default system prompt (`lib/prompts.ts`, override with `SYSTEM_PROMPT`)
 - Conversation history with a new-conversation button and model picker; the sidebar collapses from the top bar (remembered in a cookie)
 - Rough context-window meter (~4 chars/token against the model's context length from `/api/show`)

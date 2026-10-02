@@ -2,8 +2,8 @@
 
 import { useId, useState, type ReactNode } from 'react'
 import type { AssistantPart } from '@/lib/display'
-import { GET_CURRENT_DATETIME, WEB_FETCH, WEB_SEARCH } from '@/lib/tool-definitions'
-import { AlertIcon, CheckIcon, ChevronIcon, ClockIcon, GlobeIcon, SearchIcon, ToolIcon } from './Icons'
+import { CALCULATE, GET_CURRENT_DATETIME, WEB_FETCH, WEB_SEARCH } from '@/lib/tool-definitions'
+import { AlertIcon, CalculatorIcon, CheckIcon, ChevronIcon, ClockIcon, GlobeIcon, SearchIcon, ToolIcon } from './Icons'
 
 type ToolPart = Extract<AssistantPart, { kind: 'tool' }>
 
@@ -28,6 +28,11 @@ export function describeToolCall(name: string, args: Record<string, unknown>, pe
       return { icon: <GlobeIcon />, label: `${pending ? 'Reading' : 'Read'} ${hostOf(args.url)}` }
     case GET_CURRENT_DATETIME:
       return { icon: <ClockIcon />, label: pending ? 'Checking the date and time' : 'Checked the date and time' }
+    case CALCULATE:
+      return {
+        icon: <CalculatorIcon />,
+        label: `${pending ? 'Calculating' : 'Calculated'} ${String(args.expression ?? '').replace(/\s+/g, ' ').trim()}`,
+      }
     default:
       return { icon: <ToolIcon />, label: `${pending ? 'Calling' : 'Called'} ${name}` }
   }
