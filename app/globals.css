@@ -24,7 +24,7 @@
   --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
 
   --sidebar-width: 272px;
-  --column: 46rem;
+  --column: none;
   color-scheme: light;
 }
 
