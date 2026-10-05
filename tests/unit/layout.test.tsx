@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import Page from '@/app/page'
+import ChatLayout from '@/app/(chat)/layout'
 import { isSidebarCollapsed, SIDEBAR_COOKIE, sidebarCookie } from '@/lib/sidebar'
 
 const jar = vi.hoisted(() => new Map<string, string>())
@@ -33,13 +33,13 @@ describe('sidebar cookie', () => {
   })
 })
 
-describe('Page', () => {
+describe('ChatLayout', () => {
   it('renders the sidebar expanded by default', async () => {
-    expect((await Page()).props.sidebarCollapsed).toBe(false)
+    expect((await ChatLayout()).props.sidebarCollapsed).toBe(false)
   })
 
   it('restores a collapsed sidebar from the cookie so the first paint is right', async () => {
     jar.set(SIDEBAR_COOKIE, 'collapsed')
-    expect((await Page()).props.sidebarCollapsed).toBe(true)
+    expect((await ChatLayout()).props.sidebarCollapsed).toBe(true)
   })
 })

@@ -15,6 +15,8 @@ import { makeTempDataDir } from '../helpers/temp-data'
 
 const holder = vi.hoisted(() => ({ fake: undefined as FakeOllama | undefined }))
 vi.mock('@/lib/ollama', () => ({ getOllamaClient: () => holder.fake!.client }))
+vi.mock('next/navigation', () => import('../helpers/next-navigation'))
+vi.mock('next/link', async () => ({ default: (await import('../helpers/next-navigation')).Link }))
 
 let dataDir: string
 let cleanup: () => Promise<void>
@@ -32,6 +34,7 @@ beforeEach(async () => {
   clearModelCaches()
   window.localStorage.clear()
   document.cookie = 'secret-interface.sidebar=; path=/; max-age=0'
+  window.history.replaceState(null, '', '/')
 })
 
 afterEach(async () => {
@@ -89,7 +92,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     await idle()
 
     // Sidebar history and the topbar pick up the new conversation.
-    expect(within(sidebar()).getByRole('button', { name: 'Show me a table' })).toHaveAttribute('aria-current', 'page')
+    expect(within(sidebar()).getByRole('link', { name: 'Show me a table' })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('heading', { level: 1, name: 'Show me a table' })).toBeInTheDocument()
 
     const [summary] = await getStore(dataDir).list()
@@ -172,12 +175,12 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     holder.fake!.push({ chunks: [chunk.content('Fresh reply.'), chunk.done()] })
     const user = renderApp()
 
-    await user.click(await within(sidebar()).findByRole('button', { name: 'Earlier chat' }))
+    await user.click(await within(sidebar()).findByRole('link', { name: 'Earlier chat' }))
     expect(await screen.findByText('about', { exact: false, selector: '.prose p' })).toHaveTextContent(
       'An answer about Earlier chat.',
     )
 
-    await user.click(screen.getByRole('button', { name: /New conversation/ }))
+    await user.click(screen.getByRole('link', { name: /New conversation/ }))
     expect(screen.getByRole('heading', { name: 'Nice to meet you, stranger.' })).toBeInTheDocument()
     expect(screen.queryByText('An answer about', { exact: false })).not.toBeInTheDocument()
 
@@ -185,7 +188,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     await screen.findByText('Fresh reply.')
     await idle()
     const titles = within(sidebar())
-      .getAllByRole('button')
+      .getAllByRole('link')
       .map((b) => b.textContent)
     expect(titles).toContain('Brand new topic')
     expect(titles).toContain('Earlier chat')
@@ -194,19 +197,90 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     expect(holder.fake!.requests[0].messages!.map((m) => m.content)).toEqual([DEFAULT_SYSTEM_PROMPT, 'Brand new topic'])
   })
 
+  it('gives each conversation its own URL', async () => {
+    await seedConversation('Earlier chat')
+    holder.fake!.push({ chunks: [chunk.content('Fresh reply.'), chunk.done()] })
+    const user = renderApp()
+    const entries = window.history.length
+
+    await send(user, 'Brand new topic')
+    await screen.findByText('Fresh reply.')
+    await idle()
+    const created = (await getStore(dataDir).list()).find((c) => c.title === 'Brand new topic')!
+    // The new conversation takes over the URL of the blank one rather than adding a history entry.
+    expect(window.location.pathname).toBe(`/c/${created.id}`)
+    expect(window.history.length).toBe(entries)
+
+    const earlier = within(sidebar()).getByRole('link', { name: 'Earlier chat' })
+    await user.click(earlier)
+    expect(window.location.pathname).toBe(earlier.getAttribute('href'))
+    expect(await screen.findByText('Earlier chat', { selector: '.user-bubble' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('link', { name: /New conversation/ }))
+    expect(window.location.pathname).toBe('/')
+    expect(screen.getByRole('heading', { name: 'Nice to meet you, stranger.' })).toBeInTheDocument()
+  })
+
+  it('opens the conversation named in the URL', async () => {
+    const conversation = await seedConversation('Bookmarked')
+    window.history.replaceState(null, '', `/c/${conversation.id}`)
+    renderApp()
+
+    expect(screen.getByText('Loading conversation…')).toBeInTheDocument()
+    expect(await screen.findByText('Bookmarked', { selector: '.user-bubble' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'Bookmarked' })).toBeInTheDocument()
+    expect(await within(sidebar()).findByRole('link', { name: 'Bookmarked' })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('follows the browser back and forward buttons', async () => {
+    await seedConversation('First')
+    await seedConversation('Second')
+    const user = renderApp()
+
+    await user.click(await within(sidebar()).findByRole('link', { name: 'First' }))
+    await screen.findByText('First', { selector: '.user-bubble' })
+    await user.click(within(sidebar()).getByRole('link', { name: 'Second' }))
+    await screen.findByText('Second', { selector: '.user-bubble' })
+
+    window.history.back()
+    expect(await screen.findByText('First', { selector: '.user-bubble' })).toBeInTheDocument()
+    expect(screen.queryByText('Second', { selector: '.user-bubble' })).not.toBeInTheDocument()
+
+    window.history.back()
+    expect(await screen.findByRole('heading', { name: 'Nice to meet you, stranger.' })).toBeInTheDocument()
+
+    window.history.forward()
+    expect(await screen.findByText('First', { selector: '.user-bubble' })).toBeInTheDocument()
+  })
+
+  it('reports a conversation URL that does not exist and starts afresh', async () => {
+    window.history.replaceState(null, '', '/c/missing')
+    holder.fake!.push({ chunks: [chunk.content('Fresh start.'), chunk.done()] })
+    const user = renderApp()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not open conversation: Conversation not found')
+    expect(screen.getByRole('heading', { name: 'Nice to meet you, stranger.' })).toBeInTheDocument()
+
+    await send(user, 'Something else')
+    await screen.findByText('Fresh start.')
+    await idle()
+    const [created] = await getStore(dataDir).list()
+    expect(window.location.pathname).toBe(`/c/${created.id}`)
+  })
+
   it('archives conversations into the archive folder and restores them', async () => {
     const conversation = await seedConversation('Old plans')
     const user = renderApp()
 
     await user.click(await within(sidebar()).findByRole('button', { name: 'Archive “Old plans”' }))
     await waitFor(() =>
-      expect(within(sidebar()).queryByRole('button', { name: 'Old plans' })).not.toBeInTheDocument(),
+      expect(within(sidebar()).queryByRole('link', { name: 'Old plans' })).not.toBeInTheDocument(),
     )
     expect(existsSync(path.join(dataDir, 'conversations', 'archived', `${conversation.id}.json`))).toBe(true)
     expect(existsSync(path.join(dataDir, 'conversations', `${conversation.id}.json`))).toBe(false)
 
     await user.click(within(sidebar()).getByRole('button', { name: /^Archived/ }))
-    await user.click(await within(sidebar()).findByRole('button', { name: 'Old plans' }))
+    await user.click(await within(sidebar()).findByRole('link', { name: 'Old plans' }))
 
     // Archived conversations open read-only with a restore prompt.
     expect(await screen.findByText('This conversation is archived.')).toBeInTheDocument()
@@ -216,17 +290,18 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled())
     expect(existsSync(path.join(dataDir, 'conversations', `${conversation.id}.json`))).toBe(true)
     await user.click(within(sidebar()).getByRole('button', { name: 'Recent' }))
-    expect(within(sidebar()).getByRole('button', { name: 'Old plans' })).toBeInTheDocument()
+    expect(within(sidebar()).getByRole('link', { name: 'Old plans' })).toBeInTheDocument()
   })
 
   it('archives the open conversation from the top bar', async () => {
     const conversation = await seedConversation('Current one')
     const user = renderApp()
-    await user.click(await within(sidebar()).findByRole('button', { name: 'Current one' }))
+    await user.click(await within(sidebar()).findByRole('link', { name: 'Current one' }))
     await screen.findByText('Current one', { selector: '.user-bubble' })
 
     await user.click(within(screen.getByRole('banner')).getByRole('button', { name: /Archive/ }))
     await screen.findByRole('heading', { name: 'Nice to meet you, stranger.' })
+    expect(window.location.pathname).toBe('/')
     expect(existsSync(path.join(dataDir, 'conversations', 'archived', `${conversation.id}.json`))).toBe(true)
   })
 
@@ -282,7 +357,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
   it('collapses and expands the sidebar, remembering the choice in a cookie', async () => {
     await seedConversation('Kept safe')
     const user = renderApp()
-    await within(sidebar()).findByRole('button', { name: 'Kept safe' })
+    await within(sidebar()).findByRole('link', { name: 'Kept safe' })
 
     await user.click(screen.getByRole('button', { name: 'Hide conversations' }))
     expect(sidebar()).toHaveAttribute('inert')
@@ -290,7 +365,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
 
     await user.click(screen.getByRole('button', { name: 'Show conversations' }))
     expect(sidebar()).not.toHaveAttribute('inert')
-    expect(within(sidebar()).getByRole('button', { name: 'Kept safe' })).toBeInTheDocument()
+    expect(within(sidebar()).getByRole('link', { name: 'Kept safe' })).toBeInTheDocument()
     expect(document.cookie).toContain('secret-interface.sidebar=expanded')
   })
 
@@ -316,7 +391,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
 
     await user.click(screen.getByRole('button', { name: 'Show conversations' }))
     expect(sidebar()).toHaveAttribute('data-open')
-    await user.click(await within(sidebar()).findByRole('button', { name: 'On the go' }))
+    await user.click(await within(sidebar()).findByRole('link', { name: 'On the go' }))
     await waitFor(() => expect(sidebar()).not.toHaveAttribute('data-open'))
     expect(document.cookie).not.toContain('secret-interface.sidebar')
   })

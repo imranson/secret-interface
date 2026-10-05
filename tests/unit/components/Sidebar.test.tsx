@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { Sidebar, type SidebarProps } from '@/components/Sidebar'
 import type { ConversationSummary } from '@/lib/types'
 
+vi.mock('next/link', async () => ({ default: (await import('../../helpers/next-navigation')).Link }))
+
 const conv = (id: string, title: string, archived = false): ConversationSummary => ({
   id,
   title,
@@ -39,16 +41,24 @@ describe('<Sidebar>', () => {
     setup()
     const nav = screen.getByRole('navigation', { name: 'Recent conversations' })
     expect(within(nav).getByRole('heading', { name: 'Today' })).toBeInTheDocument()
-    expect(within(nav).getByRole('button', { name: 'Beta' })).toHaveAttribute('aria-current', 'page')
-    expect(within(nav).getByRole('button', { name: 'Alpha' })).not.toHaveAttribute('aria-current')
+    expect(within(nav).getByRole('link', { name: 'Beta' })).toHaveAttribute('aria-current', 'page')
+    expect(within(nav).getByRole('link', { name: 'Alpha' })).not.toHaveAttribute('aria-current')
+  })
+
+  it('links each conversation to its own URL', () => {
+    setup()
+    expect(screen.getByRole('link', { name: 'Alpha' })).toHaveAttribute('href', '/c/a')
+    expect(screen.getByRole('link', { name: /New conversation/ })).toHaveAttribute('href', '/')
   })
 
   it('opens, creates and archives conversations', async () => {
     const props = setup()
-    await userEvent.click(screen.getByRole('button', { name: 'Alpha' }))
+    await userEvent.click(screen.getByRole('link', { name: 'Alpha' }))
     expect(props.onSelect).toHaveBeenCalledWith('a')
-    await userEvent.click(screen.getByRole('button', { name: /New conversation/ }))
+    expect(window.location.pathname).toBe('/c/a')
+    await userEvent.click(screen.getByRole('link', { name: /New conversation/ }))
     expect(props.onNew).toHaveBeenCalled()
+    expect(window.location.pathname).toBe('/')
     await userEvent.click(screen.getByRole('button', { name: 'Archive “Alpha”' }))
     expect(props.onArchive).toHaveBeenCalledWith('a')
   })

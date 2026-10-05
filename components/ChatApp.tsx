@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { usePathname, useRouter } from 'next/navigation'
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   getConversation,
   getModelInfo,
@@ -11,6 +12,7 @@ import {
 } from '@/lib/api-client'
 import { applyStreamEvent } from '@/lib/chat-reducer'
 import { upsertConversation } from '@/lib/format'
+import { conversationIdFromPath, conversationPath } from '@/lib/routes'
 import { sidebarCookie } from '@/lib/sidebar'
 import { estimateContextTokens, estimateTokens, MESSAGE_OVERHEAD_TOKENS } from '@/lib/tokens'
 import { TOOL_DEFINITIONS } from '@/lib/tool-definitions'
@@ -100,6 +102,8 @@ export function ChatApp({
   systemPrompt,
   sidebarCollapsed: initiallyCollapsed = false,
 }: ChatAppProps) {
+  const router = useRouter()
+  const routeId = conversationIdFromPath(usePathname())
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   const [archivedList, setArchivedList] = useState<ConversationSummary[] | null>(null)
   const [view, setView] = useState<SidebarView>('recent')
@@ -107,7 +111,8 @@ export function ChatApp({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(initiallyCollapsed)
   const narrow = useSyncExternalStore(subscribeToScreenSize, isNarrowScreen, isNarrowScreenOnServer)
   const [current, setCurrent] = useState<CurrentConversation>(NEW_CONVERSATION)
-  const [loading, setLoading] = useState(false)
+  // A conversation URL loads its conversation once mounted; say so from the first paint.
+  const [loading, setLoading] = useState(routeId !== null)
   const [draft, setDraft] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -119,6 +124,9 @@ export function ChatApp({
   const [lastUsage, setLastUsage] = useState<{ prompt_tokens: number; completion_tokens: number } | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
+  // The conversation shown or being loaded. Clicks update it and the URL together, so the view only follows the URL
+  // when it moves on its own (first load, back/forward).
+  const viewIdRef = useRef<string | null>(null)
   // Bumped whenever the view changes conversation, so late events from an old stream are ignored.
   const runRef = useRef(0)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -177,17 +185,19 @@ export function ChatApp({
 
   const newConversation = useCallback(() => {
     resetView()
+    viewIdRef.current = null
     setLoading(false)
     setCurrent(NEW_CONVERSATION)
     inputRef.current?.focus()
   }, [resetView])
 
   const openConversation = async (id: string) => {
-    if (id === current.id) {
+    if (id === viewIdRef.current) {
       setSidebarOpen(false)
       return
     }
     resetView()
+    viewIdRef.current = id
     const run = runRef.current
     setLoading(true)
     try {
@@ -200,11 +210,22 @@ export function ChatApp({
         messages: conversation.messages,
       })
     } catch (e) {
-      if (run === runRef.current) setError(`Could not open conversation: ${messageOf(e)}`)
+      if (run !== runRef.current) return
+      // Don't leave the previous conversation on screen under this URL, where a reply would be sent to it.
+      setCurrent(NEW_CONVERSATION)
+      setError(`Could not open conversation: ${messageOf(e)}`)
     } finally {
       if (run === runRef.current) setLoading(false)
     }
   }
+
+  const followUrl = useEffectEvent((id: string | null) => {
+    if (id === viewIdRef.current) return
+    if (id) openConversation(id)
+    else newConversation()
+  })
+
+  useEffect(() => followUrl(routeId), [routeId])
 
   const sidebarVisible = narrow ? sidebarOpen : !sidebarCollapsed
 
@@ -235,7 +256,10 @@ export function ChatApp({
       const summary = await setArchivedApi(id, true)
       setConversations((list) => list.filter((c) => c.id !== id))
       setArchivedList((list) => (list ? upsertConversation(list, summary) : list))
-      if (current.id === id) newConversation()
+      if (current.id === id) {
+        newConversation()
+        router.push('/')
+      }
     } catch (e) {
       setError(`Could not archive: ${messageOf(e)}`)
     }
@@ -257,6 +281,7 @@ export function ChatApp({
     if (!text || streaming || current.archived || loading) return
 
     const run = ++runRef.current
+    const isNew = current.id === null
     const controller = new AbortController()
     abortRef.current = controller
     const userMessage: ChatMessage = { role: 'user', content: text, created_at: new Date().toISOString() }
@@ -277,7 +302,10 @@ export function ChatApp({
         switch (event.type) {
           case 'start':
             started = true
+            viewIdRef.current = event.conversation.id
             setCurrent((c) => ({ ...c, id: event.conversation.id, title: event.conversation.title }))
+            // Give a new conversation its own URL without remounting anything or adding a history entry.
+            if (isNew) window.history.replaceState(null, '', conversationPath(event.conversation.id))
             setConversations((list) => upsertConversation(list, event.conversation))
             break
           case 'usage':

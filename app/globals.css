@@ -214,6 +214,8 @@ button:disabled {
 
 .new-chat {
   display: flex;
+  color: inherit;
+  text-decoration: none;
   align-items: center;
   justify-content: center;
   gap: 8px;
@@ -293,6 +295,7 @@ button:disabled {
 
 .conv-open {
   flex: 1;
+  text-decoration: none;
   min-width: 0;
   padding: 7px 8px 7px 10px;
   border: 0;

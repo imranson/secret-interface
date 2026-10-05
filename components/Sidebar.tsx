@@ -1,6 +1,8 @@
 'use client'
 
+import Link from 'next/link'
 import { groupByDate } from '@/lib/format'
+import { conversationPath } from '@/lib/routes'
 import type { ConversationSummary } from '@/lib/types'
 import { ArchiveIcon, PlusIcon, RestoreIcon } from './Icons'
 
@@ -19,6 +21,7 @@ export interface SidebarProps {
   open: boolean
   /** Folded out of view on wide screens. */
   collapsed: boolean
+  /** Called as a link click navigates in this tab (not when it opens a new one). */
   onSelect: (id: string) => void
   onNew: () => void
   onArchive: (id: string) => void
@@ -42,9 +45,9 @@ export function Sidebar(props: SidebarProps) {
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">§</span> secret interface
         </div>
-        <button type="button" className="new-chat" onClick={props.onNew}>
+        <Link href="/" className="new-chat" onNavigate={props.onNew}>
           <PlusIcon /> New conversation
-        </button>
+        </Link>
       </div>
 
       <div className="view-switch" role="group" aria-label="Show">
@@ -68,15 +71,17 @@ export function Sidebar(props: SidebarProps) {
               <ul className="conv-list">
                 {group.items.map((c) => (
                   <li key={c.id} className="conv-item" data-active={c.id === currentId || undefined}>
-                    <button
-                      type="button"
+                    <Link
+                      href={conversationPath(c.id)}
+                      // The chat fetches the conversation itself; prefetching would only add a request per visible link.
+                      prefetch={false}
                       className="conv-open"
                       aria-current={c.id === currentId ? 'page' : undefined}
-                      onClick={() => props.onSelect(c.id)}
+                      onNavigate={() => props.onSelect(c.id)}
                       title={c.title}
                     >
                       {c.title}
-                    </button>
+                    </Link>
                     {view === 'recent' ? (
                       <button
                         type="button"
