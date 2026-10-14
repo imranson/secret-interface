@@ -6,10 +6,6 @@ import type { ToolCallRecord } from './types'
 
 export { TOOL_DEFINITIONS }
 
-/** Caps what a single tool result can add to the context window. */
-export const MAX_TOOL_OUTPUT_CHARS = 12_000
-const MAX_SEARCH_EXCERPT_CHARS = 2_000
-const MAX_FETCH_LINKS = 25
 /** Limits for one calculation, so runaway expressions such as `zeros(1e5, 1e5)` can't hang or crash the server. */
 export const CALCULATION_TIMEOUT_MS = 5_000
 const CALCULATION_MEMORY_MB = 256
@@ -24,10 +20,6 @@ export interface ToolContext {
 export interface ToolResult {
   content: string
   error?: boolean
-}
-
-export function truncate(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max - 1)}…`
 }
 
 /** Some models send arguments as a JSON string rather than an object. */
@@ -69,13 +61,13 @@ async function webSearch(args: Record<string, unknown>, ctx: ToolContext): Promi
       [
         `[${i + 1}] ${hit.title?.trim() || 'Untitled'}`,
         hit.url ? `URL: ${hit.url}` : '',
-        truncate((hit.content ?? '').trim(), MAX_SEARCH_EXCERPT_CHARS),
+        (hit.content ?? '').trim(),
       ]
         .filter(Boolean)
         .join('\n'),
     )
     .join('\n\n')
-  return truncate(`Search results for "${query}":\n\n${body}`, MAX_TOOL_OUTPUT_CHARS)
+  return `Search results for "${query}":\n\n${body}`
 }
 
 async function webFetch(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
@@ -88,7 +80,7 @@ async function webFetch(args: Record<string, unknown>, ctx: ToolContext): Promis
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('Only http(s) URLs can be fetched')
   const page: Partial<WebFetchResponse> = await ctx.client.webFetch({ url: url.toString() })
-  const links = (page.links ?? []).slice(0, MAX_FETCH_LINKS)
+  const links = page.links ?? []
   const text = [
     `Title: ${page.title?.trim() || 'Untitled'}`,
     `URL: ${page.url || url.toString()}`,
@@ -96,7 +88,7 @@ async function webFetch(args: Record<string, unknown>, ctx: ToolContext): Promis
     (page.content ?? '').trim() || '(no readable content)',
     links.length ? `\nLinks:\n${links.map((l) => `- ${l}`).join('\n')}` : '',
   ].join('\n')
-  return truncate(text, MAX_TOOL_OUTPUT_CHARS)
+  return text
 }
 
 export function isValidTimeZone(timeZone: string): boolean {
@@ -179,7 +171,7 @@ function calculate(args: Record<string, unknown>): Promise<string> {
     worker.once('message', ({ lines, error }: { lines?: string[]; error?: string }) => {
       if (error !== undefined || !lines) reject(new Error(error))
       else if (lines.length === 0) resolve('No result (every statement ended with ";").')
-      else resolve(truncate(lines.join('\n'), MAX_TOOL_OUTPUT_CHARS))
+      else resolve(lines.join('\n'))
     })
     worker.once('error', (error: Error & { code?: string }) => {
       reject(error.code === 'ERR_WORKER_OUT_OF_MEMORY' ? new Error('Calculation ran out of memory and was stopped') : error)

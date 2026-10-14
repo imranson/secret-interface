@@ -7,8 +7,6 @@ import { AlertIcon, CalculatorIcon, CheckIcon, ChevronIcon, ClockIcon, GlobeIcon
 
 type ToolPart = Extract<AssistantPart, { kind: 'tool' }>
 
-const MAX_RESULT_PREVIEW = 6_000
-
 function hostOf(url: unknown): string {
   try {
     return new URL(String(url)).hostname.replace(/^www\./, '')
@@ -67,11 +65,7 @@ export function ToolCallCard({ part }: { part: ToolPart }) {
           <pre>{JSON.stringify(part.args, null, 2)}</pre>
           <div className="tool-section-label">Result</div>
           <pre>
-            {part.pending
-              ? 'Waiting for result…'
-              : result.length > MAX_RESULT_PREVIEW
-                ? `${result.slice(0, MAX_RESULT_PREVIEW)}\n… (${result.length - MAX_RESULT_PREVIEW} more characters)`
-                : result || '(empty)'}
+            {part.pending ? 'Waiting for result…' : result || '(empty)'}
           </pre>
         </div>
       )}

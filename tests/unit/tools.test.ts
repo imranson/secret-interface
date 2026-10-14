@@ -4,9 +4,7 @@ import {
   CALCULATION_TIMEOUT_MS,
   currentDateTime,
   executeTool,
-  MAX_TOOL_OUTPUT_CHARS,
   parseToolArguments,
-  truncate,
 } from '@/lib/tools'
 import { createFakeOllama } from '../helpers/fake-ollama'
 
@@ -34,13 +32,6 @@ describe('parseToolArguments', () => {
     expect(parseToolArguments('[1,2]')).toEqual({})
     expect(parseToolArguments(null)).toEqual({})
     expect(parseToolArguments([1])).toEqual({})
-  })
-})
-
-describe('truncate', () => {
-  it('only shortens long text', () => {
-    expect(truncate('abc', 5)).toBe('abc')
-    expect(truncate('abcdef', 4)).toBe('abc…')
   })
 })
 
@@ -80,13 +71,13 @@ describe('web_search', () => {
     expect(missing).toEqual({ content: 'Error: "query" is required', error: true })
   })
 
-  it('caps very large results', async () => {
+  it('keeps very large results whole', async () => {
     const { client } = createFakeOllama()
     client.webSearch.mockResolvedValueOnce({
       results: Array.from({ length: 10 }, (_, i) => ({ title: `R${i}`, url: 'https://x', content: 'z'.repeat(5000) })),
     })
     const result = await executeTool(call(WEB_SEARCH, { query: 'big' }), { client })
-    expect(result.content.length).toBeLessThanOrEqual(MAX_TOOL_OUTPUT_CHARS)
+    expect(result.content.match(/z+/g)).toEqual(Array(10).fill('z'.repeat(5000)))
   })
 
   it('turns API failures into an error result instead of throwing', async () => {
@@ -120,12 +111,13 @@ describe('web_fetch', () => {
     expect(client.webFetch).not.toHaveBeenCalled()
   })
 
-  it('truncates long pages', async () => {
+  it('keeps long pages and every link', async () => {
     const { client } = createFakeOllama()
-    client.webFetch.mockResolvedValueOnce({ title: 'Long', url: 'https://x.dev', content: 'w'.repeat(50_000), links: [] })
+    const links = Array.from({ length: 40 }, (_, i) => `https://x.dev/${i}`)
+    client.webFetch.mockResolvedValueOnce({ title: 'Long', url: 'https://x.dev', content: 'w'.repeat(50_000), links })
     const result = await executeTool(call(WEB_FETCH, { url: 'https://x.dev' }), { client })
-    expect(result.content.length).toBe(MAX_TOOL_OUTPUT_CHARS)
-    expect(result.content.endsWith('…')).toBe(true)
+    expect(result.content).toContain('w'.repeat(50_000))
+    expect(result.content.endsWith('- https://x.dev/39')).toBe(true)
   })
 })
 
