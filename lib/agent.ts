@@ -30,7 +30,10 @@ export interface RunAgentOptions {
 const UNSUPPORTED_THINKING = /does not support think|thinking is not supported/i
 const UNSUPPORTED_TOOLS = /does not support tools|tools are not supported/i
 
-export function thinkParam(think: ThinkOption | undefined): ChatRequest['think'] {
+/** The Ollama server accepts `max`, but the SDK's `ChatRequest['think']` type doesn't list it yet. */
+type ThinkParam = ChatRequest['think'] | 'max'
+
+export function thinkParam(think: ThinkOption | undefined): ThinkParam {
   switch (think) {
     case 'on':
       return true
@@ -39,6 +42,7 @@ export function thinkParam(think: ThinkOption | undefined): ChatRequest['think']
     case 'low':
     case 'medium':
     case 'high':
+    case 'max':
       return think
     default:
       return undefined // 'auto'
@@ -63,7 +67,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
       model,
       messages: toOllamaMessages(opts.systemPrompt, [...opts.history, ...output]),
       stream: true,
-      ...(think !== undefined && { think }),
+      ...(think !== undefined && { think: think as ChatRequest['think'] }),
       ...(tools.length > 0 && { tools }),
     }
     const assistant: ChatMessage = { role: 'assistant', content: '', created_at: new Date().toISOString(), model }

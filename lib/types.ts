@@ -45,7 +45,7 @@ export interface ConversationSummary {
 }
 
 /** `auto` leaves thinking to the model's default; the levels are for models such as gpt-oss. */
-export const THINK_OPTIONS = ['auto', 'off', 'on', 'low', 'medium', 'high'] as const
+export const THINK_OPTIONS = ['auto', 'off', 'on', 'low', 'medium', 'high', 'max'] as const
 export type ThinkOption = (typeof THINK_OPTIONS)[number]
 
 export interface ChatRequestBody {

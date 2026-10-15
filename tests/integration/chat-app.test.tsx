@@ -115,6 +115,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
       'Thinking: low',
       'Thinking: medium',
       'Thinking: high',
+      'Thinking: max',
     ])
     await user.selectOptions(thinking, 'high')
     await send(user, 'A or B?')

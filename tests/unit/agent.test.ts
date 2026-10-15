@@ -34,6 +34,7 @@ describe('thinkParam', () => {
     expect(thinkParam('low')).toBe('low')
     expect(thinkParam('medium')).toBe('medium')
     expect(thinkParam('high')).toBe('high')
+    expect(thinkParam('max')).toBe('max')
   })
 })
 

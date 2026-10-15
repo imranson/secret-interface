@@ -30,6 +30,7 @@ const THINK_LABELS: Record<ThinkOption, string> = {
   low: 'Thinking: low',
   medium: 'Thinking: medium',
   high: 'Thinking: high',
+  max: 'Thinking: max',
 }
 
 const PREF_THINK = 'secret-interface.think'
