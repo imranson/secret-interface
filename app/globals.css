@@ -397,7 +397,37 @@ button:disabled {
 .user-row {
   display: flex;
   justify-content: flex-end;
+  align-items: flex-end;
+  gap: 6px;
   margin: 8px 0 28px;
+}
+
+.user-edit {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin-bottom: 2px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0;
+}
+
+.user-row:hover .user-edit,
+.user-edit:focus-visible {
+  opacity: 1;
+}
+
+.user-edit:hover:not(:disabled) {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.user-edit:disabled {
+  opacity: 0;
 }
 
 .user-bubble {
@@ -409,6 +439,40 @@ button:disabled {
   overflow-wrap: anywhere;
   font-size: 15px;
   line-height: 1.55;
+}
+
+.user-edit-form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: 85%;
+}
+
+.user-edit-input {
+  width: 100%;
+  min-width: 260px;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 18px 18px 6px 18px;
+  outline: none;
+  resize: vertical;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.user-edit-input:focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+}
+
+.user-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .assistant {
@@ -1033,6 +1097,10 @@ button:disabled {
   }
 
   .conv-action {
+    opacity: 1;
+  }
+
+  .user-edit {
     opacity: 1;
   }
 }

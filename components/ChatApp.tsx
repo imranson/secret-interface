@@ -277,17 +277,23 @@ export function ChatApp({
     }
   }
 
-  const send = async () => {
-    const text = draft.trim()
-    if (!text || streaming || current.archived || loading) return
-
+  /** Streams a reply for `message`, applying events to the message list the caller already updated. */
+  const streamReply = async ({
+    message,
+    conversationId,
+    editIndex,
+    rollback,
+  }: {
+    message: string
+    conversationId: string | null
+    editIndex?: number
+    /** Restores the message list if the request is rejected before anything is saved. */
+    rollback: () => void
+  }) => {
     const run = ++runRef.current
-    const isNew = current.id === null
+    const isNew = conversationId === null
     const controller = new AbortController()
     abortRef.current = controller
-    const userMessage: ChatMessage = { role: 'user', content: text, created_at: new Date().toISOString() }
-    setCurrent((c) => ({ ...c, messages: [...c.messages, userMessage] }))
-    setDraft('')
     setError(null)
     setNotice(null)
     setStreaming(true)
@@ -295,7 +301,14 @@ export function ChatApp({
     let started = false
     try {
       const events = streamChat(
-        { conversationId: current.id, message: text, think, model, timezone: browserTimeZone() },
+        {
+          conversationId,
+          message,
+          think,
+          model,
+          timezone: browserTimeZone(),
+          ...(editIndex !== undefined && { editIndex }),
+        },
         controller.signal,
       )
       for await (const event of events) {
@@ -333,9 +346,8 @@ export function ChatApp({
           .then(setConversations)
           .catch(() => {})
       } else if (!started) {
-        // Rejected before anything was saved: undo the optimistic message and give the text back.
-        setCurrent((c) => ({ ...c, messages: c.messages.filter((m) => m !== userMessage) }))
-        setDraft((d) => d || text)
+        // Rejected before anything was saved: put the message list back and give the text back.
+        rollback()
         setError(messageOf(e))
       } else {
         setError(messageOf(e))
@@ -346,6 +358,37 @@ export function ChatApp({
         abortRef.current = null
       }
     }
+  }
+
+  const send = async () => {
+    const text = draft.trim()
+    if (!text || streaming || current.archived || loading) return
+    const userMessage: ChatMessage = { role: 'user', content: text, created_at: new Date().toISOString() }
+    setCurrent((c) => ({ ...c, messages: [...c.messages, userMessage] }))
+    setDraft('')
+    await streamReply({
+      message: text,
+      conversationId: current.id,
+      rollback: () => {
+        setCurrent((c) => ({ ...c, messages: c.messages.filter((m) => m !== userMessage) }))
+        setDraft((d) => d || text)
+      },
+    })
+  }
+
+  /** Replaces a user message and regenerates the reply after it. */
+  const editMessage = async (index: number, newText: string) => {
+    const text = newText.trim()
+    if (!text || streaming || current.archived || loading || current.id === null) return
+    const original = current.messages
+    const edited: ChatMessage = { ...current.messages[index], content: text }
+    setCurrent((c) => ({ ...c, messages: [...c.messages.slice(0, index), edited] }))
+    await streamReply({
+      message: text,
+      conversationId: current.id,
+      editIndex: index,
+      rollback: () => setCurrent((c) => ({ ...c, messages: original })),
+    })
   }
 
   const empty = (
@@ -413,6 +456,7 @@ export function ChatApp({
             messages={current.messages}
             streaming={streaming}
             empty={empty}
+            onEditMessage={editMessage}
           />
         )}
 

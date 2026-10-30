@@ -26,6 +26,9 @@ export async function POST(request: Request) {
   const text = typeof body.message === 'string' ? body.message.trim() : ''
   if (!text) return jsonError('Message is required', 400)
   if (body.think !== undefined && !THINK_OPTIONS.includes(body.think)) return jsonError('Invalid think option', 400)
+  if (body.editIndex !== undefined && (!Number.isInteger(body.editIndex) || body.editIndex < 0)) {
+    return jsonError('Invalid edit index', 400)
+  }
 
   const config = getConfig()
   if (isCloudHost(config.host) && !config.apiKey) {
@@ -40,7 +43,13 @@ export async function POST(request: Request) {
     if (!existing) return jsonError('Conversation not found', 404)
     if (existing.archived) return jsonError('Conversation is archived; restore it to continue', 409)
     conversation = existing
+    // Editing replaces the edited message and everything after it with this new message.
+    if (body.editIndex !== undefined) {
+      if (body.editIndex > conversation.messages.length) return jsonError('Edit index out of range', 400)
+      conversation.messages = conversation.messages.slice(0, body.editIndex)
+    }
   } else {
+    if (body.editIndex !== undefined) return jsonError('Edit index requires a conversation', 400)
     conversation = store.create({ title: deriveTitle(text) })
   }
 

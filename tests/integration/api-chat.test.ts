@@ -141,6 +141,41 @@ describe('POST /api/chat', () => {
     expect(saved.model).toBe('gpt-oss:120b')
   })
 
+  it('replaces a message and everything after it when editing', async () => {
+    holder.fake!.push({ chunks: [chunk.content('First answer'), chunk.done()] })
+    const first = await events(await post({ message: 'First question' }))
+    const id = (first[0] as Extract<StreamEvent, { type: 'start' }>).conversation.id
+
+    holder.fake!.push({ chunks: [chunk.content('Second answer'), chunk.done()] })
+    await events(await post({ conversationId: id, message: 'Second question' }))
+
+    holder.fake!.push({ chunks: [chunk.content('Revised answer'), chunk.done()] })
+    const edited = await events(await post({ conversationId: id, message: 'First question, revised', editIndex: 0 }))
+    expect(edited[0]).toMatchObject({ type: 'start', conversation: { id } })
+
+    // Ollama saw only the revised message, not the two old turns.
+    expect(holder.fake!.requests[2].messages!.slice(1)).toEqual([{ role: 'user', content: 'First question, revised' }])
+
+    const saved = await readConversationFile(id)
+    expect(saved.messages).toHaveLength(2)
+    expect(saved.messages[0]).toMatchObject({ role: 'user', content: 'First question, revised' })
+    expect(saved.messages[1]).toMatchObject({ role: 'assistant', content: 'Revised answer' })
+  })
+
+  it('validates the edit index', async () => {
+    expect((await post({ message: 'hi', editIndex: 0 })).status).toBe(400)
+    expect((await post({ message: 'hi', editIndex: -1 })).status).toBe(400)
+    expect((await post({ message: 'hi', editIndex: 1.5 })).status).toBe(400)
+
+    const store = getStore(dataDir)
+    const conversation = store.create()
+    conversation.messages.push({ role: 'user', content: 'Only one message' })
+    await store.save(conversation)
+    const outOfRange = await post({ conversationId: conversation.id, message: 'hi', editIndex: 2 })
+    expect(outOfRange.status).toBe(400)
+    expect(holder.fake!.client.chat).not.toHaveBeenCalled()
+  })
+
   it('passes the browser time zone to the datetime tool', async () => {
     holder.fake!.push(
       { chunks: [chunk.toolCall('get_current_datetime', {}), chunk.done()] },

@@ -55,6 +55,11 @@ export interface ChatRequestBody {
   model?: string
   /** The browser's IANA time zone, used by the datetime tool. */
   timezone?: string
+  /**
+   * When editing a message, the index in the stored conversation at which to drop messages before
+   * appending the new user message. The edited message and everything after it are replaced.
+   */
+  editIndex?: number
 }
 
 /** Events streamed (as NDJSON) from POST /api/chat to the browser. */

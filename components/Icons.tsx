@@ -107,6 +107,12 @@ export const CheckIcon = (p: IconProps) => (
   </Svg>
 )
 
+export const PencilIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
+  </Svg>
+)
+
 export const AlertIcon = (p: IconProps) => (
   <Svg {...p}>
     <circle cx="12" cy="12" r="9" />

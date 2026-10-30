@@ -222,6 +222,35 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     expect(screen.getByRole('heading', { name: 'Nice to meet you, stranger.' })).toBeInTheDocument()
   })
 
+  it('edits a user message and regenerates the reply after it', async () => {
+    await seedConversation('Original question')
+    holder.fake!.push({ chunks: [chunk.content('Revised answer.'), chunk.done()] })
+    const user = renderApp()
+
+    await user.click(await within(sidebar()).findByRole('link', { name: 'Original question' }))
+    await screen.findByText('Original question', { selector: '.user-bubble' })
+
+    await user.click(screen.getByRole('button', { name: 'Edit message' }))
+    const box = screen.getByRole('textbox', { name: 'Edit message' })
+    expect(box).toHaveValue('Original question')
+    await user.clear(box)
+    await user.type(box, 'Revised question{Enter}')
+
+    expect(await screen.findByText('Revised answer.')).toBeInTheDocument()
+    await idle()
+
+    expect(screen.getByText('Revised question', { selector: '.user-bubble' })).toBeInTheDocument()
+    expect(screen.queryByText('Original question', { selector: '.user-bubble' })).not.toBeInTheDocument()
+    expect(screen.getByRole('article', { name: 'Assistant message' })).toHaveTextContent('Revised answer.')
+    expect(screen.getByRole('article', { name: 'Assistant message' })).not.toHaveTextContent('An answer about')
+
+    const [summary] = await getStore(dataDir).list()
+    const saved = await getStore(dataDir).get(summary.id)
+    expect(saved!.messages).toHaveLength(2)
+    expect(saved!.messages[0]).toMatchObject({ role: 'user', content: 'Revised question' })
+    expect(saved!.messages[1]).toMatchObject({ role: 'assistant', content: 'Revised answer.' })
+  })
+
   it('opens the conversation named in the URL', async () => {
     const conversation = await seedConversation('Bookmarked')
     window.history.replaceState(null, '', `/c/${conversation.id}`)

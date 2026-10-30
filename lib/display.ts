@@ -13,7 +13,7 @@ export type AssistantPart =
     }
 
 export type DisplayItem =
-  | { kind: 'user'; key: string; content: string }
+  | { kind: 'user'; key: string; content: string; index: number }
   | { kind: 'assistant'; key: string; parts: AssistantPart[]; streaming: boolean }
 
 type ToolPart = Extract<AssistantPart, { kind: 'tool' }>
@@ -30,7 +30,7 @@ export function buildDisplayItems(messages: ChatMessage[], streaming = false): D
   messages.forEach((message, index) => {
     if (message.role === 'user') {
       current = null
-      items.push({ kind: 'user', key: `u${index}`, content: message.content })
+      items.push({ kind: 'user', key: `u${index}`, content: message.content, index })
       return
     }
     if (message.role !== 'assistant' && message.role !== 'tool') return
