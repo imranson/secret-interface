@@ -1,5 +1,12 @@
 import { parseNdjson } from './ndjson'
-import type { ChatRequestBody, Conversation, ConversationSummary, StreamEvent } from './types'
+import type {
+  ChatRequestBody,
+  Conversation,
+  ConversationSummary,
+  CreateScheduleInput,
+  ScheduledMessage,
+  StreamEvent,
+} from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -49,6 +56,46 @@ export async function listModels(): Promise<{ defaultModel: string; models: stri
 
 export async function getModelInfo(model: string): Promise<{ model: string; contextLength: number; source: string }> {
   return readJson(await fetch(`/api/model-info?model=${encodeURIComponent(model)}`, { cache: 'no-store' }))
+}
+
+export async function listSchedules(): Promise<ScheduledMessage[]> {
+  const res = await fetch('/api/schedules', { cache: 'no-store' })
+  return (await readJson<{ schedules: ScheduledMessage[] }>(res)).schedules
+}
+
+export async function createSchedule(body: CreateScheduleInput): Promise<ScheduledMessage> {
+  const res = await fetch('/api/schedules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return (await readJson<{ schedule: ScheduledMessage }>(res)).schedule
+}
+
+export async function updateSchedule(
+  id: string,
+  patch: { enabled?: boolean; unread?: boolean },
+): Promise<ScheduledMessage> {
+  const res = await fetch(`/api/schedules/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  return (await readJson<{ schedule: ScheduledMessage }>(res)).schedule
+}
+
+export async function deleteSchedule(id: string): Promise<void> {
+  const res = await fetch(`/api/schedules/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  await readJson<{ ok: boolean }>(res)
+}
+
+export async function markSchedulesRead(conversationId: string): Promise<void> {
+  const res = await fetch('/api/schedules/mark-read', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ conversationId }),
+  })
+  await readJson<{ marked: number }>(res)
 }
 
 /** POSTs a message and yields the server's streamed events. Throws ApiError if the request is rejected. */

@@ -3,12 +3,17 @@
 import { usePathname, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
+  createSchedule,
+  deleteSchedule,
   getConversation,
   getModelInfo,
   listConversations,
   listModels,
+  listSchedules,
+  markSchedulesRead,
   setArchived as setArchivedApi,
   streamChat,
+  updateSchedule,
 } from '@/lib/api-client'
 import { applyStreamEvent } from '@/lib/chat-reducer'
 import { upsertConversation } from '@/lib/format'
@@ -16,11 +21,12 @@ import { conversationIdFromPath, conversationPath } from '@/lib/routes'
 import { sidebarCookie } from '@/lib/sidebar'
 import { estimateContextTokens, estimateTokens, MESSAGE_OVERHEAD_TOKENS } from '@/lib/tokens'
 import { TOOL_DEFINITIONS } from '@/lib/tool-definitions'
-import { THINK_OPTIONS, type ChatMessage, type ConversationSummary, type ThinkOption } from '@/lib/types'
+import { THINK_OPTIONS, type ChatMessage, type ConversationSummary, type ScheduledMessage, type ThinkOption } from '@/lib/types'
 import { Composer } from './Composer'
 import { ContextMeter } from './ContextMeter'
-import { ArchiveIcon, RestoreIcon, SidebarIcon } from './Icons'
+import { ArchiveIcon, CalendarIcon, RestoreIcon, SidebarIcon } from './Icons'
 import { MessageList } from './MessageList'
+import { ScheduleDialog, type ScheduleDraft } from './ScheduleDialog'
 import { Sidebar, type SidebarView } from './Sidebar'
 
 const THINK_LABELS: Record<ThinkOption, string> = {
@@ -123,8 +129,13 @@ export function ChatApp({
   const [think, setThink] = useState<ThinkOption>('auto')
   const [contextWindow, setContextWindow] = useState(defaultContextWindow)
   const [lastUsage, setLastUsage] = useState<{ prompt_tokens: number; completion_tokens: number } | null>(null)
+  const [schedules, setSchedules] = useState<ScheduledMessage[] | null>(null)
+  const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [scheduleInitial, setScheduleInitial] = useState('')
 
   const abortRef = useRef<AbortController | null>(null)
+  // Mirrors `streaming` for the poll interval, so it can skip refreshes without restarting itself.
+  const streamingRef = useRef(false)
   // The conversation shown or being loaded. Clicks update it and the URL together, so the view only follows the URL
   // when it moves on its own (first load, back/forward).
   const viewIdRef = useRef<string | null>(null)
@@ -136,6 +147,9 @@ export function ChatApp({
     listConversations()
       .then(setConversations)
       .catch((e) => setError(`Could not load conversations: ${messageOf(e)}`))
+    listSchedules()
+      .then(setSchedules)
+      .catch(() => setSchedules([]))
     listModels()
       .then(({ defaultModel: serverDefault, models: available }) => {
         setModels(available)
@@ -210,6 +224,11 @@ export function ChatApp({
         archived: conversation.archived,
         messages: conversation.messages,
       })
+      // A scheduled run into this conversation has now been read.
+      setSchedules((list) =>
+        list ? list.map((s) => (s.lastConversationId === id ? { ...s, unread: false } : s)) : list,
+      )
+      markSchedulesRead(id).catch(() => {})
     } catch (e) {
       if (run !== runRef.current) return
       // Don't leave the previous conversation on screen under this URL, where a reply would be sent to it.
@@ -240,6 +259,12 @@ export function ChatApp({
     document.cookie = sidebarCookie(collapsed)
   }
 
+  const refreshSchedules = useCallback(() => {
+    listSchedules()
+      .then(setSchedules)
+      .catch(() => setSchedules((s) => s ?? []))
+  }, [])
+
   const changeView = (next: SidebarView) => {
     setView(next)
     if (next === 'archived' && archivedList === null) {
@@ -250,7 +275,32 @@ export function ChatApp({
           setError(`Could not load archive: ${messageOf(e)}`)
         })
     }
+    if (next === 'scheduled') refreshSchedules()
   }
+
+  // Poll for scheduled runs and new conversations so the indicators stay fresh without a reload.
+  useEffect(() => {
+    const refresh = () => {
+      if (streamingRef.current) return
+      listConversations()
+        .then(setConversations)
+        .catch(() => {})
+      refreshSchedules()
+    }
+    const id = setInterval(refresh, 30_000)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refresh()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [refreshSchedules])
+
+  useEffect(() => {
+    streamingRef.current = streaming
+  }, [streaming])
 
   const archive = async (id: string) => {
     try {
@@ -274,6 +324,39 @@ export function ChatApp({
       if (current.id === id) setCurrent((c) => ({ ...c, archived: false }))
     } catch (e) {
       setError(`Could not restore: ${messageOf(e)}`)
+    }
+  }
+
+  const openSchedule = (initial = '') => {
+    setScheduleInitial(initial)
+    setScheduleOpen(true)
+  }
+
+  const handleCreateSchedule = async (draft: ScheduleDraft) => {
+    try {
+      const created = await createSchedule(draft)
+      setSchedules((list) => [created, ...(list ?? [])])
+      setScheduleOpen(false)
+    } catch (e) {
+      setError(`Could not schedule: ${messageOf(e)}`)
+    }
+  }
+
+  const handleDeleteSchedule = async (id: string) => {
+    try {
+      await deleteSchedule(id)
+      setSchedules((list) => (list ? list.filter((s) => s.id !== id) : list))
+    } catch (e) {
+      setError(`Could not delete schedule: ${messageOf(e)}`)
+    }
+  }
+
+  const handleToggleSchedule = async (id: string, enabled: boolean) => {
+    try {
+      const updated = await updateSchedule(id, { enabled })
+      setSchedules((list) => (list ? list.map((s) => (s.id === id ? updated : s)) : list))
+    } catch (e) {
+      setError(`Could not update schedule: ${messageOf(e)}`)
     }
   }
 
@@ -405,6 +488,7 @@ export function ChatApp({
         onViewChange={changeView}
         conversations={conversations}
         archived={archivedList}
+        schedules={schedules}
         currentId={current.id}
         busyId={streaming ? current.id : null}
         open={sidebarOpen}
@@ -413,6 +497,9 @@ export function ChatApp({
         onNew={newConversation}
         onArchive={archive}
         onRestore={restore}
+        onNewSchedule={() => openSchedule()}
+        onDeleteSchedule={handleDeleteSchedule}
+        onToggleSchedule={handleToggleSchedule}
       />
       {sidebarOpen && <div className="scrim" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
 
@@ -530,12 +617,31 @@ export function ChatApp({
                     </option>
                   ))}
                 </select>
+                <button
+                  type="button"
+                  className="icon-button schedule-button"
+                  aria-label="Schedule a message"
+                  title="Schedule this message"
+                  onClick={() => openSchedule(draft)}
+                >
+                  <CalendarIcon />
+                </button>
                 <ContextMeter used={historyTokens + draftTokens} total={contextWindow} lastUsage={lastUsage} />
               </>
             }
           />
         </div>
       </main>
+
+      <ScheduleDialog
+        open={scheduleOpen}
+        initialMessage={scheduleInitial}
+        conversations={conversations}
+        model={model}
+        think={think}
+        onClose={() => setScheduleOpen(false)}
+        onCreate={handleCreateSchedule}
+      />
     </div>
   )
 }

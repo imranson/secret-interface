@@ -1,11 +1,8 @@
-import { isEmptyMessage, runAgent } from '@/lib/agent'
-import { getConfig, isCloudHost, normalizeModelName } from '@/lib/config'
-import { describeError } from '@/lib/errors'
+import { runChatTurn } from '@/lib/chat'
+import { getConfig, isCloudHost } from '@/lib/config'
 import { encodeNdjson } from '@/lib/ndjson'
-import { getOllamaClient } from '@/lib/ollama'
-import { getStore, isValidConversationId, summarize } from '@/lib/store'
-import { deriveTitle } from '@/lib/title'
-import { THINK_OPTIONS, type ChatMessage, type ChatRequestBody, type Conversation, type StreamEvent } from '@/lib/types'
+import { getStore, isValidConversationId } from '@/lib/store'
+import { THINK_OPTIONS, type ChatRequestBody, type Conversation, type StreamEvent } from '@/lib/types'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -36,32 +33,22 @@ export async function POST(request: Request) {
   }
 
   const store = getStore()
-  let conversation: Conversation
+  let conversation: Conversation | undefined
   if (body.conversationId) {
     if (!isValidConversationId(body.conversationId)) return jsonError('Invalid conversation id', 400)
     const existing = await store.get(body.conversationId)
     if (!existing) return jsonError('Conversation not found', 404)
     if (existing.archived) return jsonError('Conversation is archived; restore it to continue', 409)
-    conversation = existing
     // Editing replaces the edited message and everything after it with this new message.
     if (body.editIndex !== undefined) {
-      if (body.editIndex > conversation.messages.length) return jsonError('Edit index out of range', 400)
-      conversation.messages = conversation.messages.slice(0, body.editIndex)
+      if (body.editIndex > existing.messages.length) return jsonError('Edit index out of range', 400)
+      existing.messages = existing.messages.slice(0, body.editIndex)
     }
-  } else {
-    if (body.editIndex !== undefined) return jsonError('Edit index requires a conversation', 400)
-    conversation = store.create({ title: deriveTitle(text) })
+    conversation = existing
+  } else if (body.editIndex !== undefined) {
+    return jsonError('Edit index requires a conversation', 400)
   }
 
-  const model = normalizeModelName(body.model?.trim() || conversation.model || config.defaultModel, config.host)
-  const now = new Date().toISOString()
-  conversation.messages.push({ role: 'user', content: text, created_at: now })
-  conversation.model = model
-  conversation.updated_at = now
-  // Persist the user's message before calling the model so it survives failures.
-  await store.save(conversation)
-
-  const history = [...conversation.messages]
   const timeZone = typeof body.timezone === 'string' && body.timezone.length < 64 ? body.timezone : undefined
   const abort = new AbortController()
   const onRequestAbort = () => abort.abort()
@@ -79,33 +66,19 @@ export async function POST(request: Request) {
         }
       }
 
-      send({ type: 'start', conversation: summarize(conversation), model })
-      const produced: ChatMessage[] = []
       try {
-        for await (const event of runAgent({
-          client: getOllamaClient(),
-          model,
-          history,
-          systemPrompt: config.systemPrompt,
+        for await (const event of runChatTurn({
+          message: text,
+          conversation,
           think: body.think,
-          timeZone,
+          model: body.model,
+          timezone: timeZone,
           signal: abort.signal,
-          output: produced,
         })) {
           send(event)
         }
-      } catch (error) {
-        send({ type: 'error', message: describeError(error) })
       } finally {
         request.signal?.removeEventListener('abort', onRequestAbort)
-        conversation.messages.push(...produced.filter((m) => !isEmptyMessage(m)))
-        conversation.updated_at = new Date().toISOString()
-        try {
-          await store.save(conversation)
-        } catch (error) {
-          send({ type: 'error', message: `Could not save the conversation: ${describeError(error)}` })
-        }
-        send({ type: 'done', conversation: summarize(conversation), aborted: abort.signal.aborted })
         if (open) {
           try {
             controller.close()

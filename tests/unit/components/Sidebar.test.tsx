@@ -22,6 +22,7 @@ function setup(overrides: Partial<SidebarProps> = {}) {
     onViewChange: vi.fn(),
     conversations: [conv('a', 'Alpha'), conv('b', 'Beta')],
     archived: null,
+    schedules: [],
     currentId: 'b',
     busyId: null,
     open: false,
@@ -30,6 +31,9 @@ function setup(overrides: Partial<SidebarProps> = {}) {
     onNew: vi.fn(),
     onArchive: vi.fn(),
     onRestore: vi.fn(),
+    onNewSchedule: vi.fn(),
+    onDeleteSchedule: vi.fn(),
+    onToggleSchedule: vi.fn(),
     ...overrides,
   }
   render(<Sidebar {...props} />)

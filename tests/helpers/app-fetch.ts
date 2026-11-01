@@ -3,6 +3,10 @@ import { GET as conversationGET, PATCH as conversationPATCH } from '@/app/api/co
 import { GET as conversationsGET } from '@/app/api/conversations/route'
 import { GET as modelInfoGET } from '@/app/api/model-info/route'
 import { GET as modelsGET } from '@/app/api/models/route'
+import { DELETE as scheduleDELETE, PATCH as schedulePATCH } from '@/app/api/schedules/[id]/route'
+import { POST as scheduleMarkReadPOST } from '@/app/api/schedules/mark-read/route'
+import { GET as schedulesGET, POST as schedulesPOST } from '@/app/api/schedules/route'
+import { POST as scheduleTickPOST } from '@/app/api/schedules/tick/route'
 
 type Handler = (request: Request, context: { params: Promise<{ id: string }> }) => Promise<Response> | Response
 
@@ -11,11 +15,21 @@ function route(method: string, pathname: string): { handler: Handler; id?: strin
   if (pathname === '/api/conversations' && method === 'GET') return { handler: conversationsGET }
   if (pathname === '/api/models' && method === 'GET') return { handler: modelsGET }
   if (pathname === '/api/model-info' && method === 'GET') return { handler: modelInfoGET }
-  const match = pathname.match(/^\/api\/conversations\/([^/]+)$/)
-  if (match) {
-    const id = decodeURIComponent(match[1])
+  if (pathname === '/api/schedules' && method === 'GET') return { handler: schedulesGET }
+  if (pathname === '/api/schedules' && method === 'POST') return { handler: schedulesPOST }
+  if (pathname === '/api/schedules/mark-read' && method === 'POST') return { handler: scheduleMarkReadPOST }
+  if (pathname === '/api/schedules/tick' && method === 'POST') return { handler: scheduleTickPOST }
+  const conversationMatch = pathname.match(/^\/api\/conversations\/([^/]+)$/)
+  if (conversationMatch) {
+    const id = decodeURIComponent(conversationMatch[1])
     if (method === 'GET') return { handler: conversationGET, id }
     if (method === 'PATCH') return { handler: conversationPATCH, id }
+  }
+  const scheduleMatch = pathname.match(/^\/api\/schedules\/([^/]+)$/)
+  if (scheduleMatch) {
+    const id = decodeURIComponent(scheduleMatch[1])
+    if (method === 'PATCH') return { handler: schedulePATCH, id }
+    if (method === 'DELETE') return { handler: scheduleDELETE, id }
   }
   return null
 }
