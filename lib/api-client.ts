@@ -1,5 +1,5 @@
 import { parseNdjson } from './ndjson'
-import type { ChatRequestBody, Conversation, ConversationSummary, StreamEvent } from './types'
+import type { ChatRequestBody, Conversation, ConversationSummary, CreateScheduleBody, ScheduleView, StreamEvent } from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -41,6 +41,38 @@ export async function setArchived(id: string, archived: boolean): Promise<Conver
     body: JSON.stringify({ archived }),
   })
   return (await readJson<{ conversation: ConversationSummary }>(res)).conversation
+}
+
+export async function listSchedules(): Promise<ScheduleView[]> {
+  const res = await fetch('/api/schedules', { cache: 'no-store' })
+  return (await readJson<{ schedules: ScheduleView[] }>(res)).schedules
+}
+
+export async function createSchedule(body: CreateScheduleBody): Promise<ScheduleView> {
+  const res = await fetch('/api/schedules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return (await readJson<{ schedule: ScheduleView }>(res)).schedule
+}
+
+export async function updateSchedule(id: string, change: { enabled?: boolean; unread?: boolean }): Promise<ScheduleView> {
+  const res = await fetch(`/api/schedules/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(change),
+  })
+  return (await readJson<{ schedule: ScheduleView }>(res)).schedule
+}
+
+export async function deleteSchedule(id: string): Promise<void> {
+  await readJson(await fetch(`/api/schedules/${encodeURIComponent(id)}`, { method: 'DELETE' }))
+}
+
+export async function runSchedule(id: string): Promise<ScheduleView> {
+  const res = await fetch(`/api/schedules/${encodeURIComponent(id)}/run`, { method: 'POST' })
+  return (await readJson<{ schedule: ScheduleView }>(res)).schedule
 }
 
 export async function listModels(): Promise<{ defaultModel: string; models: string[]; error?: string }> {

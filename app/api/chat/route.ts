@@ -3,6 +3,7 @@ import { getConfig, isCloudHost, normalizeModelName } from '@/lib/config'
 import { describeError } from '@/lib/errors'
 import { encodeNdjson } from '@/lib/ndjson'
 import { getOllamaClient } from '@/lib/ollama'
+import { beginChat, endChat } from '@/lib/run-state'
 import { getStore, isValidConversationId, summarize } from '@/lib/store'
 import { deriveTitle } from '@/lib/title'
 import { THINK_OPTIONS, type ChatMessage, type ChatRequestBody, type Conversation, type StreamEvent } from '@/lib/types'
@@ -35,10 +36,33 @@ export async function POST(request: Request) {
     return jsonError('OLLAMA_API_KEY is not set. Add it to .env.local and restart the server.', 500)
   }
 
+  // Claimed before the conversation is read, so a schedule can't refresh it underneath this reply.
+  const id = body.conversationId || null
+  if (id) {
+    if (!isValidConversationId(id)) return jsonError('Invalid conversation id', 400)
+    if (!beginChat(id)) return jsonError('This conversation is refreshing. Try again when the new report is in.', 409)
+  }
+  let released = false
+  const release = () => {
+    if (id && !released) endChat(id)
+    released = true
+  }
+  try {
+    const response = await reply(request, body, text, release)
+    if (!response.ok) release()
+    return response
+  } catch (error) {
+    release()
+    throw error
+  }
+}
+
+/** Streams the reply, calling `release` once the conversation has been saved for the last time. */
+async function reply(request: Request, body: Partial<ChatRequestBody>, text: string, release: () => void) {
+  const config = getConfig()
   const store = getStore()
   let conversation: Conversation
   if (body.conversationId) {
-    if (!isValidConversationId(body.conversationId)) return jsonError('Invalid conversation id', 400)
     const existing = await store.get(body.conversationId)
     if (!existing) return jsonError('Conversation not found', 404)
     if (existing.archived) return jsonError('Conversation is archived; restore it to continue', 409)
@@ -105,6 +129,7 @@ export async function POST(request: Request) {
         } catch (error) {
           send({ type: 'error', message: `Could not save the conversation: ${describeError(error)}` })
         }
+        release()
         send({ type: 'done', conversation: summarize(conversation), aborted: abort.signal.aborted })
         if (open) {
           try {

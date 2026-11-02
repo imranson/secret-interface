@@ -12,6 +12,10 @@ A chat client for Ollama **cloud** models, built with Next.js, TypeScript, the O
 - Conversation history with a new-conversation button and model picker; the sidebar collapses from the top bar (remembered in a cookie)
 - Rough context-window meter (~4 chars/token against the model's context length from `/api/show`)
 - Archive / restore: moves files between `data/conversations/` and `data/conversations/archived/`
+- Scheduled conversations: write a prompt, press **Repeat**, pick a time. The **Scheduled** tab shows scheduled / unread / completed counts and a status for each schedule, with Run now, Pause and Delete
+  - Each schedule owns one conversation: the first run creates it and later runs replace its contents, including any replies. A failed run keeps the last report
+  - Archiving the conversation keeps that report; the next run starts a new one
+  - Runs come from a background clock (`instrumentation.ts`) that checks every 30s, so the server must be running. Anything missed while it was down runs once on start-up
 
 ## Setup
 
@@ -28,7 +32,7 @@ npm run dev        # http://localhost:3000
 | `OLLAMA_HOST` | API host | `https://ollama.com` |
 | `OLLAMA_MODEL` | Default model (`:cloud`/`-cloud` suffixes are stripped) | `gpt-oss:120b` |
 | `OLLAMA_CONTEXT_WINDOW` | Fallback context size for the meter | `128000` |
-| `DATA_DIR` | Where conversations are stored | `data` |
+| `DATA_DIR` | Where conversations and schedules are stored | `data` |
 | `SYSTEM_PROMPT` | Replaces the default system prompt | – |
 
 ## Tests

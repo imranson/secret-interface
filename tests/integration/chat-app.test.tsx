@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatApp, type ChatAppProps } from '@/components/ChatApp'
 import { clearModelCaches } from '@/lib/models'
 import { DEFAULT_SYSTEM_PROMPT } from '@/lib/prompts'
+import { getScheduleStore } from '@/lib/schedule-store'
 import { getStore } from '@/lib/store'
 import { appFetch } from '../helpers/app-fetch'
 import { chunk, createFakeOllama, HttpError, type FakeOllama } from '../helpers/fake-ollama'
@@ -424,5 +425,169 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     await user.click(await within(sidebar()).findByRole('link', { name: 'On the go' }))
     await waitFor(() => expect(sidebar()).not.toHaveAttribute('data-open'))
     expect(document.cookie).not.toContain('secret-interface.sidebar')
+  })
+
+  describe('scheduled conversations', () => {
+    async function schedulePrompt(user: ReturnType<typeof userEvent.setup>, text: string) {
+      await user.click(screen.getByRole('button', { name: 'Repeat' }))
+      await user.type(screen.getByRole('textbox', { name: 'Message' }), `${text}{Enter}`)
+    }
+
+    async function seedSchedule(overrides: Parameters<ReturnType<typeof getScheduleStore>['update']>[1] = () => {}) {
+      const store = getScheduleStore(dataDir)
+      const schedule = store.create({
+        prompt: 'Top news',
+        rule: { kind: 'daily', time: '09:00', timezone: 'UTC' },
+      })
+      await store.save(schedule)
+      await store.update(schedule.id, overrides)
+      return schedule
+    }
+
+    it('schedules the composer text in one step, using the chosen model, without sending it', async () => {
+      const user = renderApp()
+      await schedulePrompt(user, 'Top news, briefly')
+
+      const notice = await screen.findByText(/Scheduled “Top news, briefly”: Every day at 09:00\. First run:/)
+      expect(notice).toBeInTheDocument()
+      expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('')
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeInTheDocument()
+      expect(holder.fake!.client.chat).not.toHaveBeenCalled()
+
+      const list = within(sidebar()).getByRole('list', { name: 'Schedules' })
+      expect(list).toHaveTextContent('Top news, briefly')
+      expect(list).toHaveTextContent('Scheduled · Every day at 09:00')
+
+      const [saved] = await getScheduleStore(dataDir).list()
+      expect(saved).toMatchObject({ prompt: 'Top news, briefly', model: 'kimi-k2.6', conversationId: null })
+    })
+
+    it('offers weekdays, weekly and monthly, and waits until the choice is complete', async () => {
+      const user = renderApp()
+      await user.click(screen.getByRole('button', { name: 'Repeat' }))
+      await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Report')
+      const picker = screen.getByRole('group', { name: 'Schedule' })
+
+      await user.click(within(picker).getByRole('button', { name: 'Weekdays' }))
+      expect(picker).toHaveTextContent('Weekdays at 09:00')
+
+      await user.click(within(picker).getByRole('button', { name: 'Monthly' }))
+      await user.clear(within(picker).getByRole('spinbutton'))
+      await user.type(within(picker).getByRole('spinbutton'), '15')
+      expect(picker).toHaveTextContent('Day 15 of each month at 09:00')
+
+      await user.click(within(picker).getByRole('button', { name: 'Weekly' }))
+      const days = within(picker).getByRole('group', { name: 'Days' })
+      for (const day of within(days).getAllByRole('button')) {
+        if (day.getAttribute('aria-pressed') === 'true') await user.click(day)
+      }
+      expect(screen.getByRole('button', { name: 'Schedule' })).toBeDisabled()
+      expect(picker).toHaveTextContent('Pick when this should run.')
+
+      await user.click(within(days).getByRole('button', { name: 'Mon' }))
+      await user.click(within(days).getByRole('button', { name: 'Wed' }))
+      expect(picker).toHaveTextContent('Every Mon, Wed at 09:00')
+      await user.click(screen.getByRole('button', { name: 'Schedule' }))
+
+      await waitFor(async () => {
+        expect((await getScheduleStore(dataDir).list())[0]?.rule).toMatchObject({ kind: 'weekly', weekdays: [1, 3] })
+      })
+    })
+
+    it('can schedule from an archived conversation, which cannot be replied to', async () => {
+      const old = await seedConversation('Old chat', true)
+      window.history.replaceState(null, '', `/c/${old.id}`)
+      const user = renderApp()
+      await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toBeDisabled())
+      await schedulePrompt(user, 'Top news')
+      expect(await screen.findByText(/Scheduled “Top news”/)).toBeInTheDocument()
+      expect(await getStore(dataDir).get(old.id)).toMatchObject({ archived: true })
+    })
+
+    it('leaves the normal send behaviour alone when Repeat is switched back off', async () => {
+      holder.fake!.push({ chunks: [chunk.content('Sent normally.'), chunk.done()] })
+      const user = renderApp()
+      await user.click(screen.getByRole('button', { name: 'Repeat' }))
+      await user.click(screen.getByRole('button', { name: 'Repeat' }))
+      await send(user, 'Just once')
+      expect(await screen.findByText('Sent normally.')).toBeInTheDocument()
+      expect(await getScheduleStore(dataDir).list()).toEqual([])
+    })
+
+    it('shows a run through to unread, then completed once it is opened', async () => {
+      holder.fake!.push({ chunks: [chunk.content('Monday report'), chunk.done()] })
+      await seedSchedule()
+      const user = renderApp()
+      await user.click(within(sidebar()).getByRole('button', { name: 'Scheduled' }))
+      await user.click(await within(sidebar()).findByRole('button', { name: 'Run “Top news” now' }))
+
+      const badge = await within(sidebar()).findByRole('button', { name: 'Scheduled, 1 unread' }, { timeout: 5000 })
+      expect(badge).toBeInTheDocument()
+
+      await user.click(within(sidebar()).getByRole('button', { name: 'Recent' }))
+      await user.click(await within(sidebar()).findByRole('link', { name: 'Unread: Top news' }))
+      expect(await screen.findByText('Monday report')).toBeInTheDocument()
+
+      await waitFor(() => expect(within(sidebar()).getByRole('button', { name: 'Scheduled' })).toBeInTheDocument())
+      await user.click(within(sidebar()).getByRole('button', { name: 'Scheduled' }))
+      expect(within(sidebar()).getByRole('list', { name: 'Schedules' })).toHaveTextContent('Completed')
+      expect((await getScheduleStore(dataDir).list())[0].unread).toBe(false)
+    })
+
+    it('swaps in the new report when the open conversation refreshes, keeping the unsent draft', async () => {
+      const report = await seedConversation('Top news')
+      await seedSchedule((s) => {
+        s.conversationId = report.id
+        s.lastRunAt = '2026-11-01T09:00:00.000Z'
+      })
+      holder.fake!.push({ chunks: [chunk.content('Tuesday report'), chunk.done()] })
+      window.history.replaceState(null, '', `/c/${report.id}`)
+      const user = renderApp()
+      expect(await screen.findByText(/An answer about/)).toBeInTheDocument()
+      expect(await screen.findByText(/Each run replaces this conversation, including replies/)).toBeInTheDocument()
+      await user.type(screen.getByRole('textbox', { name: 'Message' }), 'unsent')
+
+      await user.click(within(sidebar()).getByRole('button', { name: 'Scheduled' }))
+      await user.click(within(sidebar()).getByRole('button', { name: 'Run “Top news” now' }))
+
+      expect(await screen.findByText('Tuesday report', {}, { timeout: 5000 })).toBeInTheDocument()
+      expect(screen.queryByText(/An answer about/)).not.toBeInTheDocument()
+      expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('unsent')
+      // Read on arrival, since it is already on screen.
+      await waitFor(async () => expect((await getScheduleStore(dataDir).list())[0].unread).toBe(false))
+    })
+
+    it('blocks replies while the open conversation refreshes', async () => {
+      const report = await seedConversation('Top news')
+      const schedule = await seedSchedule((s) => {
+        s.conversationId = report.id
+      })
+      holder.fake!.push({ chunks: [chunk.content('Slow')], hang: true })
+      window.history.replaceState(null, '', `/c/${report.id}`)
+      const user = renderApp()
+      await user.click(within(sidebar()).getByRole('button', { name: 'Scheduled' }))
+      await user.click(await within(sidebar()).findByRole('button', { name: 'Run “Top news” now' }))
+
+      expect(await screen.findByText(/Refreshing\. The new report/)).toBeInTheDocument()
+      expect(screen.getByRole('textbox', { name: 'Message' })).toBeDisabled()
+
+      await user.click(within(sidebar()).getByRole('button', { name: 'Delete schedule “Top news”' }))
+      await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled())
+      expect(await getScheduleStore(dataDir).get(schedule.id)).toBeNull()
+      expect(await getStore(dataDir).get(report.id)).not.toBeNull()
+    })
+
+    it('says so when a run fails and keeps showing the last report', async () => {
+      const report = await seedConversation('Top news')
+      await seedSchedule((s) => {
+        s.conversationId = report.id
+        s.lastRunAt = '2026-11-01T09:00:00.000Z'
+        s.lastError = 'Rate limited by Ollama (429)'
+      })
+      window.history.replaceState(null, '', `/c/${report.id}`)
+      renderApp()
+      expect(await screen.findByText(/The last run failed, so this is the previous report/)).toBeInTheDocument()
+      expect(screen.getByText(/An answer about/)).toBeInTheDocument()
+    })
   })
 })

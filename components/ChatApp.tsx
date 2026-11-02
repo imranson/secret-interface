@@ -13,15 +13,18 @@ import {
 import { applyStreamEvent } from '@/lib/chat-reducer'
 import { upsertConversation } from '@/lib/format'
 import { conversationIdFromPath, conversationPath } from '@/lib/routes'
+import { defaultScheduleDraft, describeRule, formatRunTime, ruleFromDraft, type ScheduleDraft } from '@/lib/schedule'
 import { sidebarCookie } from '@/lib/sidebar'
 import { estimateContextTokens, estimateTokens, MESSAGE_OVERHEAD_TOKENS } from '@/lib/tokens'
 import { TOOL_DEFINITIONS } from '@/lib/tool-definitions'
 import { THINK_OPTIONS, type ChatMessage, type ConversationSummary, type ThinkOption } from '@/lib/types'
 import { Composer } from './Composer'
 import { ContextMeter } from './ContextMeter'
-import { ArchiveIcon, RestoreIcon, SidebarIcon } from './Icons'
+import { ArchiveIcon, RepeatIcon, RestoreIcon, SidebarIcon } from './Icons'
 import { MessageList } from './MessageList'
+import { SchedulePicker } from './SchedulePicker'
 import { Sidebar, type SidebarView } from './Sidebar'
+import { useSchedules } from './useSchedules'
 
 const THINK_LABELS: Record<ThinkOption, string> = {
   auto: 'Thinking: auto',
@@ -123,6 +126,8 @@ export function ChatApp({
   const [think, setThink] = useState<ThinkOption>('auto')
   const [contextWindow, setContextWindow] = useState(defaultContextWindow)
   const [lastUsage, setLastUsage] = useState<{ prompt_tokens: number; completion_tokens: number } | null>(null)
+  // Set while the composer is scheduling its text rather than sending it.
+  const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   // The conversation shown or being loaded. Clicks update it and the URL together, so the view only follows the URL
@@ -131,6 +136,30 @@ export function ChatApp({
   // Bumped whenever the view changes conversation, so late events from an old stream are ignored.
   const runRef = useRef(0)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  const scheduling = useSchedules((schedule) => {
+    listConversations()
+      .then(setConversations)
+      .catch(() => {})
+    // Swap in the new report if it's on screen. Replying is blocked during a refresh, so nothing here is in progress.
+    const id = schedule.conversationId
+    if (!id || id !== viewIdRef.current || schedule.lastError) return
+    const run = runRef.current
+    getConversation(id)
+      .then((c) => {
+        if (run === runRef.current) setCurrent({ id: c.id, title: c.title, archived: c.archived, messages: c.messages })
+      })
+      .catch(() => {})
+  })
+  const { schedules, markRead } = scheduling
+  const openSchedule = current.id ? schedules.find((s) => s.conversationId === current.id) : undefined
+  const refreshing = openSchedule?.status === 'running'
+
+  const openScheduleId = openSchedule?.id
+  const openScheduleUnread = openSchedule?.unread
+  useEffect(() => {
+    if (openScheduleId && openScheduleUnread) markRead(openScheduleId).catch(() => {})
+  }, [openScheduleId, openScheduleUnread, markRead])
 
   useEffect(() => {
     listConversations()
@@ -391,6 +420,34 @@ export function ChatApp({
     })
   }
 
+  const timezone = browserTimeZone() ?? 'UTC'
+  const scheduleRule = scheduleDraft && ruleFromDraft(scheduleDraft, timezone)
+
+  const startScheduling = () => {
+    setScheduleDraft((d) => d ?? defaultScheduleDraft())
+    setSidebarOpen(false)
+    inputRef.current?.focus()
+  }
+
+  /** Schedules the composer's text. Nothing runs until its first scheduled time, or until "Run now". */
+  const createScheduleFromComposer = async () => {
+    const text = draft.trim()
+    if (!text || !scheduleRule) return
+    try {
+      const schedule = await scheduling.create({ prompt: text, rule: scheduleRule, model, think })
+      setDraft('')
+      setScheduleDraft(null)
+      setView('scheduled')
+      setError(null)
+      const next = schedule.nextRunAt ? ` First run: ${formatRunTime(schedule.nextRunAt)}.` : ''
+      setNotice(`Scheduled “${schedule.title}”: ${describeRule(schedule.rule)}.${next}`)
+    } catch (e) {
+      setError(`Could not schedule: ${messageOf(e)}`)
+    }
+  }
+
+  const reportScheduleError = (action: string) => (e: unknown) => setError(`Could not ${action}: ${messageOf(e)}`)
+
   const empty = (
     <div className="empty">
       <h1 className="empty-title">Nice to meet you, stranger.</h1>
@@ -405,6 +462,7 @@ export function ChatApp({
         onViewChange={changeView}
         conversations={conversations}
         archived={archivedList}
+        schedules={schedules}
         currentId={current.id}
         busyId={streaming ? current.id : null}
         open={sidebarOpen}
@@ -413,6 +471,12 @@ export function ChatApp({
         onNew={newConversation}
         onArchive={archive}
         onRestore={restore}
+        onNewSchedule={startScheduling}
+        onRunSchedule={(id) => scheduling.run(id).catch(reportScheduleError('run the schedule'))}
+        onSetScheduleEnabled={(id, enabled) =>
+          scheduling.setEnabled(id, enabled).catch(reportScheduleError('update the schedule'))
+        }
+        onDeleteSchedule={(id) => scheduling.remove(id).catch(reportScheduleError('delete the schedule'))}
       />
       {sidebarOpen && <div className="scrim" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
 
@@ -489,17 +553,47 @@ export function ChatApp({
               </button>
             </div>
           )}
+          {openSchedule && !current.archived && (
+            <p className="schedule-note" role="status">
+              <RepeatIcon width={13} height={13} />
+              {refreshing
+                ? 'Refreshing. The new report will replace this conversation.'
+                : openSchedule.lastError
+                  ? 'The last run failed, so this is the previous report.'
+                  : `${describeRule(openSchedule.rule)}. Each run replaces this conversation, including replies.`}
+            </p>
+          )}
           <Composer
             value={draft}
             onChange={setDraft}
-            onSubmit={send}
+            onSubmit={scheduleDraft ? createScheduleFromComposer : send}
             onStop={stopStreaming}
             streaming={streaming}
-            disabled={current.archived || loading}
+            disabled={loading || (!scheduleDraft && (current.archived || refreshing))}
             inputRef={inputRef}
-            placeholder={current.messages.length ? 'Reply…' : 'Ask anything…'}
+            placeholder={
+              scheduleDraft
+                ? 'What should run on a schedule?'
+                : current.messages.length
+                  ? 'Reply…'
+                  : 'Ask anything…'
+            }
+            schedulePicker={
+              scheduleDraft && <SchedulePicker draft={scheduleDraft} timezone={timezone} onChange={setScheduleDraft} />
+            }
+            scheduleReady={scheduleRule !== null}
             toolbar={
               <>
+                <button
+                  type="button"
+                  className="pill-button"
+                  aria-pressed={scheduleDraft !== null}
+                  title="Run this prompt on a schedule"
+                  disabled={streaming}
+                  onClick={() => (scheduleDraft ? setScheduleDraft(null) : startScheduling())}
+                >
+                  <RepeatIcon width={13} height={13} /> Repeat
+                </button>
                 <select
                   className="pill-select"
                   aria-label="Model"

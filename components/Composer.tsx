@@ -1,7 +1,7 @@
 'use client'
 
 import { useLayoutEffect, type ReactNode, type RefObject } from 'react'
-import { SendIcon, StopIcon } from './Icons'
+import { RepeatIcon, SendIcon, StopIcon } from './Icons'
 
 export interface ComposerProps {
   value: string
@@ -14,6 +14,10 @@ export interface ComposerProps {
   inputRef?: RefObject<HTMLTextAreaElement | null>
   /** Controls shown under the text box (model, thinking, context meter). */
   toolbar?: ReactNode
+  /** Schedule settings. While shown, submitting schedules the text instead of sending it. */
+  schedulePicker?: ReactNode
+  /** False while the schedule settings are incomplete. */
+  scheduleReady?: boolean
 }
 
 export function Composer({
@@ -26,6 +30,8 @@ export function Composer({
   placeholder = 'Message…',
   inputRef,
   toolbar,
+  schedulePicker,
+  scheduleReady = true,
 }: ComposerProps) {
   useLayoutEffect(() => {
     const el = inputRef?.current
@@ -34,7 +40,7 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, window.innerHeight * 0.4)}px`
   }, [value, inputRef])
 
-  const canSend = !streaming && !disabled && value.trim().length > 0
+  const canSend = !streaming && !disabled && value.trim().length > 0 && (!schedulePicker || scheduleReady)
 
   return (
     <form
@@ -59,6 +65,7 @@ export function Composer({
           }
         }}
       />
+      {schedulePicker}
       <div className="composer-bar">
         <div className="composer-tools">{toolbar}</div>
         {streaming ? (
@@ -66,8 +73,13 @@ export function Composer({
             <StopIcon />
           </button>
         ) : (
-          <button type="submit" className="send-button" disabled={!canSend} aria-label="Send message">
-            <SendIcon />
+          <button
+            type="submit"
+            className="send-button"
+            disabled={!canSend}
+            aria-label={schedulePicker ? 'Schedule' : 'Send message'}
+          >
+            {schedulePicker ? <RepeatIcon /> : <SendIcon />}
           </button>
         )}
       </div>

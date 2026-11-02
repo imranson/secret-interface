@@ -3,6 +3,9 @@ import { GET as conversationGET, PATCH as conversationPATCH } from '@/app/api/co
 import { GET as conversationsGET } from '@/app/api/conversations/route'
 import { GET as modelInfoGET } from '@/app/api/model-info/route'
 import { GET as modelsGET } from '@/app/api/models/route'
+import { POST as scheduleRunPOST } from '@/app/api/schedules/[id]/run/route'
+import { DELETE as scheduleDELETE, PATCH as schedulePATCH } from '@/app/api/schedules/[id]/route'
+import { GET as schedulesGET, POST as schedulesPOST } from '@/app/api/schedules/route'
 
 type Handler = (request: Request, context: { params: Promise<{ id: string }> }) => Promise<Response> | Response
 
@@ -11,6 +14,16 @@ function route(method: string, pathname: string): { handler: Handler; id?: strin
   if (pathname === '/api/conversations' && method === 'GET') return { handler: conversationsGET }
   if (pathname === '/api/models' && method === 'GET') return { handler: modelsGET }
   if (pathname === '/api/model-info' && method === 'GET') return { handler: modelInfoGET }
+  if (pathname === '/api/schedules' && method === 'GET') return { handler: schedulesGET }
+  if (pathname === '/api/schedules' && method === 'POST') return { handler: schedulesPOST }
+  const run = pathname.match(/^\/api\/schedules\/([^/]+)\/run$/)
+  if (run && method === 'POST') return { handler: scheduleRunPOST, id: decodeURIComponent(run[1]) }
+  const schedule = pathname.match(/^\/api\/schedules\/([^/]+)$/)
+  if (schedule) {
+    const id = decodeURIComponent(schedule[1])
+    if (method === 'PATCH') return { handler: schedulePATCH, id }
+    if (method === 'DELETE') return { handler: scheduleDELETE, id }
+  }
   const match = pathname.match(/^\/api\/conversations\/([^/]+)$/)
   if (match) {
     const id = decodeURIComponent(match[1])

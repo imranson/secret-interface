@@ -62,6 +62,53 @@ export interface ChatRequestBody {
   editIndex?: number
 }
 
+/** When a schedule runs. `time` is `HH:MM` wall-clock time in `timezone`, so it stays put across daylight saving. */
+export interface ScheduleRule {
+  kind: 'daily' | 'weekly' | 'monthly'
+  time: string
+  timezone: string
+  /** Weekly only: 0 (Sun) … 6 (Sat). */
+  weekdays?: number[]
+  /** Monthly only: 1–31; shorter months run on their last day. */
+  dayOfMonth?: number
+}
+
+/** A recurring prompt. It owns at most one conversation, which every successful run refreshes. */
+export interface Schedule {
+  id: string
+  title: string
+  prompt: string
+  rule: ScheduleRule
+  model?: string
+  think?: ThinkOption
+  enabled: boolean
+  /** The conversation this schedule refreshes; `null` until the first successful run. */
+  conversationId: string | null
+  nextRunAt: string | null
+  /** When the last run finished, successfully or not. */
+  lastRunAt: string | null
+  /** Why the last run failed; its conversation keeps the previous report. */
+  lastError: string | null
+  /** The latest report has not been opened yet. */
+  unread: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type ScheduleStatus = 'scheduled' | 'running' | 'unread' | 'completed' | 'failed' | 'paused'
+
+/** A schedule as sent to the browser. */
+export interface ScheduleView extends Schedule {
+  status: ScheduleStatus
+}
+
+export interface CreateScheduleBody {
+  prompt: string
+  rule: ScheduleRule
+  model?: string
+  think?: ThinkOption
+}
+
 /** Events streamed (as NDJSON) from POST /api/chat to the browser. */
 export type StreamEvent =
   | { type: 'start'; conversation: ConversationSummary; model: string }
