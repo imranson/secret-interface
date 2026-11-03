@@ -112,6 +112,22 @@ describe('/api/schedules', () => {
     expect(new Date(resumed.schedule.nextRunAt).getTime()).toBeGreaterThan(Date.now())
   })
 
+  it('catch-up starts every schedule that is not up to date in the background and says which', async () => {
+    holder.fake!.push({ chunks: [chunk.content('Report'), chunk.done()] }, { chunks: [chunk.content('Report'), chunk.done()] })
+    const neverRun = await create()
+    const failed = await create()
+    const upToDate = await create()
+    await getScheduleStore().update(failed.id, (s) => ((s.lastRunAt = new Date().toISOString()), (s.lastError = 'fetch failed')))
+    await getScheduleStore().update(upToDate.id, (s) => (s.lastRunAt = new Date().toISOString()))
+
+    const response = await send('POST', '/api/schedules/catch-up')
+    expect(response.status).toBe(200)
+    expect((await response.json()).started.sort()).toEqual([neverRun.id, failed.id].sort())
+    await vi.waitFor(async () => expect(await statusOf(neverRun.id)).toBe('unread'))
+    await vi.waitFor(async () => expect(await statusOf(failed.id)).toBe('unread'))
+    expect(await statusOf(upToDate.id)).toBe('completed')
+  })
+
   it('validates updates', async () => {
     const { id } = await create()
     expect((await send('PATCH', `/api/schedules/${id}`, { enabled: 'yes' })).status).toBe(400)

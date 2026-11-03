@@ -75,6 +75,12 @@ export async function runSchedule(id: string): Promise<ScheduleView> {
   return (await readJson<{ schedule: ScheduleView }>(res)).schedule
 }
 
+/** Starts every schedule that isn't up to date; returns the ids started. */
+export async function catchUpSchedules(): Promise<string[]> {
+  const res = await fetch('/api/schedules/catch-up', { method: 'POST' })
+  return (await readJson<{ started: string[] }>(res)).started
+}
+
 export async function listModels(): Promise<{ defaultModel: string; models: string[]; error?: string }> {
   return readJson(await fetch('/api/models', { cache: 'no-store' }))
 }

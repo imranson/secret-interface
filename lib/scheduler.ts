@@ -91,14 +91,28 @@ export function startRun(schedule: Schedule): Promise<void> | null {
     .finally(() => endRun(schedule.id))
 }
 
+const isDue = (s: Schedule, now: Date) => s.enabled && s.nextRunAt !== null && new Date(s.nextRunAt) <= now
+
 /**
  * Starts every due schedule and resolves once those runs end. A schedule that can't start stays due, so the next tick
  * retries it; that is how a refresh waits for a reply in progress.
  */
 export async function tickSchedules(now: Date = new Date()): Promise<void> {
-  const schedules = await getScheduleStore().list()
-  const due = schedules.filter((s) => s.enabled && s.nextRunAt !== null && new Date(s.nextRunAt) <= now)
+  const due = (await getScheduleStore().list()).filter((s) => isDue(s, now))
   await Promise.all(due.map(startRun))
+}
+
+/** Its report is current: it has run, the last run worked, and no run has come due since. */
+const isUpToDate = (s: Schedule, now: Date) => s.lastRunAt !== null && s.lastError === null && !isDue(s, now)
+
+/**
+ * Called whenever the app opens in a tab, so every schedule shows as completed or running: anything not up to date
+ * starts now, whether it never ran, came due while the server was down, or failed. Paused schedules are left alone.
+ * Returns the ids started; they run on in the background.
+ */
+export async function catchUpSchedules(now: Date = new Date()): Promise<string[]> {
+  const stale = (await getScheduleStore().list()).filter((s) => s.enabled && !isUpToDate(s, now))
+  return stale.filter((s) => startRun(s) !== null).map((s) => s.id)
 }
 
 /** Starts the background clock, once per process. Called from instrumentation.ts. */

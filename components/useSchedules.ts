@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createSchedule, deleteSchedule, listSchedules, runSchedule, updateSchedule } from '@/lib/api-client'
+import { catchUpSchedules, createSchedule, deleteSchedule, listSchedules, runSchedule, updateSchedule } from '@/lib/api-client'
 import type { CreateScheduleBody, ScheduleView } from '@/lib/types'
 
 /** Runs happen on the server with no stream attached, so the browser finds out about them by asking. */
@@ -21,6 +21,8 @@ export function useSchedules(onRunFinished: (schedule: ScheduleView) => void) {
   // The last finished run of each schedule. Unset until first seen, so loading the page doesn't report old runs.
   const lastRuns = useRef(new Map<string, string | null>())
   const wake = useRef<() => void>(() => {})
+  // Once per page load. A ref, so React's dev-mode double effect doesn't retry an instant failure twice.
+  const caughtUp = useRef(false)
 
   const refresh = useCallback(async () => {
     const list = await listSchedules()
@@ -46,7 +48,16 @@ export function useSchedules(onRunFinished: (schedule: ScheduleView) => void) {
       timer = setTimeout(poll, list?.some((s) => s.status === 'running') ? RUNNING_POLL_MS : IDLE_POLL_MS)
     }
     wake.current = poll
-    poll()
+    if (caughtUp.current) poll()
+    else {
+      caughtUp.current = true
+      // Opening the app starts every schedule that isn't up to date, so the first poll already shows them running.
+      catchUpSchedules()
+        .catch(() => {})
+        .finally(() => {
+          if (!stopped) poll()
+        })
+    }
     document.addEventListener('visibilitychange', poll)
     return () => {
       stopped = true

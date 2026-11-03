@@ -4,6 +4,7 @@ import { GET as conversationsGET } from '@/app/api/conversations/route'
 import { GET as modelInfoGET } from '@/app/api/model-info/route'
 import { GET as modelsGET } from '@/app/api/models/route'
 import { POST as scheduleRunPOST } from '@/app/api/schedules/[id]/run/route'
+import { POST as schedulesCatchUpPOST } from '@/app/api/schedules/catch-up/route'
 import { DELETE as scheduleDELETE, PATCH as schedulePATCH } from '@/app/api/schedules/[id]/route'
 import { GET as schedulesGET, POST as schedulesPOST } from '@/app/api/schedules/route'
 
@@ -16,6 +17,7 @@ function route(method: string, pathname: string): { handler: Handler; id?: strin
   if (pathname === '/api/model-info' && method === 'GET') return { handler: modelInfoGET }
   if (pathname === '/api/schedules' && method === 'GET') return { handler: schedulesGET }
   if (pathname === '/api/schedules' && method === 'POST') return { handler: schedulesPOST }
+  if (pathname === '/api/schedules/catch-up' && method === 'POST') return { handler: schedulesCatchUpPOST }
   const run = pathname.match(/^\/api\/schedules\/([^/]+)\/run$/)
   if (run && method === 'POST') return { handler: scheduleRunPOST, id: decodeURIComponent(run[1]) }
   const schedule = pathname.match(/^\/api\/schedules\/([^/]+)$/)

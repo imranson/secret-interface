@@ -3,7 +3,7 @@ import { POST as chatPOST } from '@/app/api/chat/route'
 import { DELETE as scheduleDELETE } from '@/app/api/schedules/[id]/route'
 import { beginChat, endChat, isRunning } from '@/lib/run-state'
 import { getScheduleStore } from '@/lib/schedule-store'
-import { startRun, tickSchedules } from '@/lib/scheduler'
+import { catchUpSchedules, startRun, tickSchedules } from '@/lib/scheduler'
 import { getStore } from '@/lib/store'
 import type { Schedule, ScheduleRule } from '@/lib/types'
 import { chunk, createFakeOllama, HttpError, type FakeOllama } from '../helpers/fake-ollama'
@@ -251,6 +251,57 @@ describe('tickSchedules', () => {
     const { id } = await dueSchedule({ nextRunAt: '2099-01-01T09:00:00.000Z' })
 
     expect((await runNow(id)).nextRunAt).toBe('2099-01-01T09:00:00.000Z')
+  })
+})
+
+describe('catchUpSchedules (opening the app)', () => {
+  const settled = (ids: string[]) => vi.waitFor(() => expect(ids.some(isRunning)).toBe(false))
+
+  it('starts every enabled schedule that is not up to date, once each, and leaves the rest', async () => {
+    holder.fake!.push(report('Caught up'), report('Retried'), report('First'))
+    const ran = '2026-11-01T09:00:00.000Z'
+    const future = '2099-01-01T09:00:00.000Z'
+    const overdue = await dueSchedule({ lastRunAt: ran, nextRunAt: '2020-01-01T09:00:00.000Z' })
+    const failed = await dueSchedule({ lastRunAt: ran, nextRunAt: future, lastError: 'fetch failed' })
+    const neverRun = await dueSchedule({ nextRunAt: future })
+    const upToDate = await dueSchedule({ lastRunAt: ran, nextRunAt: future })
+    const paused = await dueSchedule({ enabled: false, lastError: 'fetch failed' })
+
+    const started = await catchUpSchedules()
+    await settled(started)
+
+    expect(started.sort()).toEqual([overdue.id, failed.id, neverRun.id].sort())
+    expect(holder.fake!.client.chat).toHaveBeenCalledTimes(3)
+    for (const { id } of [overdue, failed, neverRun]) {
+      expect(await latest(id)).toMatchObject({ unread: true, lastError: null })
+      expect(new Date((await latest(id)).nextRunAt!).getTime()).toBeGreaterThan(Date.now())
+    }
+    expect((await latest(upToDate.id)).lastRunAt).toBe(ran)
+    expect((await latest(paused.id)).lastRunAt).toBeNull()
+  })
+
+  it('retries a failure again on every open until it succeeds, then leaves it alone', async () => {
+    holder.fake!.push({ error: new Error('offline') }, report('Back online'))
+    const { id } = await dueSchedule({ nextRunAt: '2099-01-01T09:00:00.000Z', lastError: 'fetch failed' })
+
+    await settled(await catchUpSchedules())
+    expect((await latest(id)).lastError).toBe('offline')
+    await settled(await catchUpSchedules())
+    expect((await latest(id)).lastError).toBeNull()
+    expect(await catchUpSchedules()).toEqual([])
+    expect(holder.fake!.client.chat).toHaveBeenCalledTimes(2)
+  })
+
+  it('skips a schedule that is already running, e.g. picked up by the start-up tick', async () => {
+    holder.fake!.push({ chunks: [chunk.content('Slow')], hang: true })
+    const schedule = await dueSchedule()
+    const run = startRun(schedule)!
+
+    expect(await catchUpSchedules()).toEqual([])
+    expect(holder.fake!.client.chat).toHaveBeenCalledTimes(1)
+
+    await scheduleDELETE(new Request('http://localhost'), { params: Promise.resolve({ id: schedule.id }) })
+    await run
   })
 })
 

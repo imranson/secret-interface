@@ -440,7 +440,11 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
         rule: { kind: 'daily', time: '09:00', timezone: 'UTC' },
       })
       await store.save(schedule)
-      await store.update(schedule.id, overrides)
+      // Up to date unless a test says otherwise, so opening the app doesn't start it.
+      await store.update(schedule.id, (s) => {
+        s.lastRunAt = '2026-11-01T09:00:00.000Z'
+        overrides(s)
+      })
       return schedule
     }
 
@@ -584,10 +588,32 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
         s.lastRunAt = '2026-11-01T09:00:00.000Z'
         s.lastError = 'Rate limited by Ollama (429)'
       })
+      // Opening the app retries it; this retry fails too.
+      holder.fake!.push({ error: new Error('Rate limited by Ollama (429)') })
       window.history.replaceState(null, '', `/c/${report.id}`)
       renderApp()
-      expect(await screen.findByText(/The last run failed, so this is the previous report/)).toBeInTheDocument()
+      await waitFor(() => expect(holder.fake!.client.chat).toHaveBeenCalledTimes(1))
+      expect(
+        await screen.findByText(/The last run failed, so this is the previous report/, {}, { timeout: 5000 }),
+      ).toBeInTheDocument()
       expect(screen.getByText(/An answer about/)).toBeInTheDocument()
+    })
+
+    it('starts every schedule that is not up to date when the app opens', async () => {
+      const report = await seedConversation('Top news')
+      await seedSchedule((s) => {
+        s.conversationId = report.id
+        s.lastRunAt = '2026-11-01T09:00:00.000Z'
+        s.lastError = 'fetch failed'
+      })
+      holder.fake!.push({ chunks: [chunk.content('Fresh report'), chunk.done()] })
+      window.history.replaceState(null, '', `/c/${report.id}`)
+      renderApp()
+
+      expect(await screen.findByText('Fresh report', {}, { timeout: 5000 })).toBeInTheDocument()
+      expect(screen.queryByText(/The last run failed/)).not.toBeInTheDocument()
+      expect((await getScheduleStore(dataDir).list())[0].lastError).toBeNull()
+      expect(holder.fake!.client.chat).toHaveBeenCalledTimes(1)
     })
   })
 })

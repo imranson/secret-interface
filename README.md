@@ -15,7 +15,7 @@ A chat client for Ollama **cloud** models, built with Next.js, TypeScript, the O
 - Scheduled conversations: write a prompt, press **Repeat**, pick a time. The **Scheduled** tab shows scheduled / unread / completed counts and a status for each schedule, with Run now, Pause and Delete
   - Each schedule owns one conversation: the first run creates it and later runs replace its contents, including any replies. A failed run keeps the last report
   - Archiving the conversation keeps that report; the next run starts a new one
-  - Runs come from a background clock (`instrumentation.ts`) that checks every 30s, so the server must be running. Anything missed while it was down runs once on start-up
+  - Runs come from a background clock (`instrumentation.ts`) that checks every 30s, so the server must be running. Anything missed while it was down runs once on start-up. Every time the app opens in a tab, each schedule shows as completed or running: any enabled schedule without an up-to-date report (never run, overdue or failed) starts then
 
 ## Setup
 
