@@ -36,6 +36,22 @@ interface UserMessageProps {
 }
 
 function UserMessage({ item, editing, draft, streaming, onEdit, onDraftChange, onSave, onCancel }: UserMessageProps) {
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  // Grow the edit box to fit its text (capped, then it scrolls).
+  useLayoutEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight + 2, window.innerHeight * 0.6)}px`
+  }, [draft, editing])
+
+  // Put the caret at the end when editing starts.
+  useLayoutEffect(() => {
+    const el = inputRef.current
+    if (editing && el) el.setSelectionRange(el.value.length, el.value.length)
+  }, [editing])
+
   if (!editing) {
     return (
       <div className="user-row">
@@ -63,10 +79,11 @@ function UserMessage({ item, editing, draft, streaming, onEdit, onDraftChange, o
         }}
       >
         <textarea
+          ref={inputRef}
           className="user-edit-input"
           aria-label="Edit message"
           value={draft}
-          rows={1}
+          rows={3}
           autoFocus
           onChange={(e) => onDraftChange(e.target.value)}
           onKeyDown={(e) => {
