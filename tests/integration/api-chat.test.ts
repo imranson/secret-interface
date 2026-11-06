@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { applyStreamEvent } from '@/lib/chat-reducer'
+import { clearModelCaches } from '@/lib/models'
 import { parseNdjson } from '@/lib/ndjson'
 import { DEFAULT_SYSTEM_PROMPT } from '@/lib/prompts'
 import { getStore } from '@/lib/store'
@@ -11,8 +12,13 @@ import type { ChatMessage, StreamEvent } from '@/lib/types'
 import { chunk, createFakeOllama, HttpError, type FakeOllama } from '../helpers/fake-ollama'
 import { makeTempDataDir } from '../helpers/temp-data'
 
-const holder = vi.hoisted(() => ({ fake: undefined as FakeOllama | undefined }))
-vi.mock('@/lib/ollama', () => ({ getOllamaClient: () => holder.fake!.client }))
+const holder = vi.hoisted(() => ({ fake: undefined as FakeOllama | undefined, backends: [] as string[] }))
+vi.mock('@/lib/ollama', () => ({
+  getOllamaClient: (backend = 'cloud') => {
+    holder.backends.push(backend)
+    return holder.fake!.client
+  },
+}))
 
 const { POST } = await import('@/app/api/chat/route')
 
@@ -26,7 +32,11 @@ beforeEach(async () => {
   vi.stubEnv('OLLAMA_HOST', '')
   vi.stubEnv('OLLAMA_MODEL', 'kimi-k2.6:cloud')
   vi.stubEnv('SYSTEM_PROMPT', '')
+  vi.stubEnv('OLLAMA_LOCAL_HOST', '')
+  vi.stubEnv('OLLAMA_LOCAL_MODEL', '')
   holder.fake = createFakeOllama()
+  holder.backends = []
+  clearModelCaches()
 })
 
 afterEach(() => cleanup())
@@ -242,5 +252,37 @@ describe('POST /api/chat', () => {
     const response = await post({ message: 'hi' })
     expect(response.status).toBe(500)
     expect((await response.json()).error).toMatch(/OLLAMA_API_KEY is not set/)
+  })
+
+  describe('on the local backend', () => {
+    it('talks to the local server, keeping the model’s suffix and needing no API key', async () => {
+      vi.stubEnv('OLLAMA_API_KEY', '')
+      holder.fake!.push({ chunks: [chunk.content('Local hello.'), chunk.done()] })
+      const response = await post({ message: 'hi', backend: 'local', model: 'gpt-oss:120b-cloud' })
+      expect(response.status).toBe(200)
+      expect((await events(response)).at(-1)).toMatchObject({ type: 'done' })
+      expect(holder.fake!.requests[0].model).toBe('gpt-oss:120b-cloud')
+      expect(holder.backends).toEqual(['local'])
+    })
+
+    it('falls back to the local server’s newest model', async () => {
+      holder.fake!.push({ chunks: [chunk.content('Hi.'), chunk.done()] })
+      await events(await post({ message: 'hi', backend: 'local' }))
+      expect(holder.fake!.requests[0].model).toBe('kimi-k2.6')
+    })
+
+    it('explains when the local server has no model to offer', async () => {
+      holder.fake!.client.list.mockRejectedValueOnce(new Error('fetch failed'))
+      const response = await post({ message: 'hi', backend: 'local' })
+      expect(response.status).toBe(400)
+      expect((await response.json()).error).toMatch(/No model available at http:\/\/127\.0\.0\.1:11434/)
+      expect(await getStore(dataDir).list()).toEqual([])
+    })
+  })
+
+  it('rejects an unknown backend', async () => {
+    const response = await post({ message: 'hi', backend: 'mars' })
+    expect(response.status).toBe(400)
+    expect((await response.json()).error).toBe('Invalid backend')
   })
 })

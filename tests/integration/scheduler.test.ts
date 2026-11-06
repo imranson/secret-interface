@@ -9,8 +9,13 @@ import type { Schedule, ScheduleRule } from '@/lib/types'
 import { chunk, createFakeOllama, HttpError, type FakeOllama } from '../helpers/fake-ollama'
 import { makeTempDataDir } from '../helpers/temp-data'
 
-const holder = vi.hoisted(() => ({ fake: undefined as FakeOllama | undefined }))
-vi.mock('@/lib/ollama', () => ({ getOllamaClient: () => holder.fake!.client }))
+const holder = vi.hoisted(() => ({ fake: undefined as FakeOllama | undefined, backends: [] as string[] }))
+vi.mock('@/lib/ollama', () => ({
+  getOllamaClient: (backend = 'cloud') => {
+    holder.backends.push(backend)
+    return holder.fake!.client
+  },
+}))
 
 const rule: ScheduleRule = { kind: 'daily', time: '09:00', timezone: 'UTC' }
 const report = (text: string) => ({ chunks: [chunk.content(text), chunk.done()] })
@@ -26,6 +31,7 @@ beforeEach(async () => {
   vi.stubEnv('OLLAMA_MODEL', 'kimi-k2.6:cloud')
   vi.stubEnv('SYSTEM_PROMPT', 'Be brief.')
   holder.fake = createFakeOllama()
+  holder.backends = []
 })
 
 afterEach(() => cleanup())
@@ -103,6 +109,17 @@ describe('a recurring run', () => {
     expect(third.conversationId).toBe(first.conversationId)
     expect(await getStore().list()).toHaveLength(1)
     expect(await contents(first.conversationId!)).toEqual(['Daily news', 'Wednesday report'])
+  })
+
+  it('runs on the schedule’s backend', async () => {
+    holder.fake!.push(report('Local report'))
+    const { id } = await dueSchedule({ backend: 'local', model: 'qwen3:8b' })
+
+    const after = await runNow(id)
+
+    expect(after.lastError).toBeNull()
+    expect(holder.fake!.requests[0].model).toBe('qwen3:8b')
+    expect(holder.backends).toEqual(['local'])
   })
 
   it('starts each refresh from scratch instead of feeding the model the old report', async () => {

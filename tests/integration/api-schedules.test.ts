@@ -59,10 +59,17 @@ describe('/api/schedules', () => {
     [{ prompt: 'x' }, 'A schedule rule is required'],
     [{ prompt: 'x', rule: { ...rule, time: 'soon' } }, 'Pick a time (HH:MM)'],
     [{ prompt: 'x', rule, think: 'hard' }, 'Invalid think option'],
+    [{ prompt: 'x', rule, backend: 'mars' }, 'Invalid backend'],
   ])('rejects %j', async (body, error) => {
     const response = await send('POST', '/api/schedules', body)
     expect(response.status).toBe(400)
     expect(await response.json()).toEqual({ error })
+  })
+
+  it('remembers the backend', async () => {
+    const schedule = await create({ backend: 'local', model: 'qwen3:8b' })
+    expect(schedule).toMatchObject({ backend: 'local', model: 'qwen3:8b' })
+    expect((await getScheduleStore().get(schedule.id))?.backend).toBe('local')
   })
 
   it('rejects a body that is not JSON', async () => {

@@ -18,8 +18,30 @@ beforeEach(() => {
 
 describe('GET /api/models', () => {
   it('returns the models available to the API key', async () => {
-    const body = await (await models()).json()
-    expect(body).toEqual({ defaultModel: 'gpt-oss:120b', models: ['gpt-oss:120b', 'kimi-k2.6'] })
+    const body = await (await models(new Request('http://localhost/api/models'))).json()
+    expect(body).toEqual({
+      backend: 'cloud',
+      host: 'https://ollama.com',
+      defaultModel: 'gpt-oss:120b',
+      models: ['gpt-oss:120b', 'kimi-k2.6'],
+    })
+  })
+
+  it('lists the local server’s models', async () => {
+    vi.stubEnv('OLLAMA_LOCAL_HOST', '')
+    vi.stubEnv('OLLAMA_LOCAL_MODEL', '')
+    const body = await (await models(new Request('http://localhost/api/models?backend=local'))).json()
+    expect(body).toEqual({
+      backend: 'local',
+      host: 'http://127.0.0.1:11434',
+      defaultModel: 'kimi-k2.6',
+      models: ['gpt-oss:120b', 'kimi-k2.6'],
+    })
+  })
+
+  it('rejects an unknown backend', async () => {
+    const response = await models(new Request('http://localhost/api/models?backend=mars'))
+    expect(response.status).toBe(400)
   })
 })
 

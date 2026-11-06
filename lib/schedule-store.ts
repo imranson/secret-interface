@@ -5,7 +5,15 @@ import { getConfig } from './config'
 import { isRunning } from './run-state'
 import { nextRunAt, parseRule, scheduleStatus } from './schedule'
 import { deriveTitle } from './title'
-import { THINK_OPTIONS, type Schedule, type ScheduleRule, type ScheduleView, type ThinkOption } from './types'
+import {
+  isBackend,
+  THINK_OPTIONS,
+  type Backend,
+  type Schedule,
+  type ScheduleRule,
+  type ScheduleView,
+  type ThinkOption,
+} from './types'
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
 
@@ -36,6 +44,7 @@ function normalize(raw: unknown, id: string): Schedule | null {
     prompt: obj.prompt,
     rule,
     model: optionalString(obj.model) ?? undefined,
+    backend: isBackend(obj.backend) ? obj.backend : undefined,
     think: THINK_OPTIONS.includes(obj.think as ThinkOption) ? (obj.think as ThinkOption) : undefined,
     enabled: obj.enabled !== false,
     conversationId: optionalString(obj.conversationId),
@@ -72,7 +81,10 @@ export class ScheduleStore {
     return path.join(this.dir, `${id}.json`)
   }
 
-  create(init: { prompt: string; rule: ScheduleRule; model?: string; think?: ThinkOption }, now = new Date()): Schedule {
+  create(
+    init: { prompt: string; rule: ScheduleRule; model?: string; backend?: Backend; think?: ThinkOption },
+    now = new Date(),
+  ): Schedule {
     const iso = now.toISOString()
     return {
       ...init,

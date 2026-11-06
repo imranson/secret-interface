@@ -14,8 +14,13 @@ import { appFetch } from '../helpers/app-fetch'
 import { chunk, createFakeOllama, HttpError, type FakeOllama } from '../helpers/fake-ollama'
 import { makeTempDataDir } from '../helpers/temp-data'
 
-const holder = vi.hoisted(() => ({ fake: undefined as FakeOllama | undefined }))
-vi.mock('@/lib/ollama', () => ({ getOllamaClient: () => holder.fake!.client }))
+const holder = vi.hoisted(() => ({ fake: undefined as FakeOllama | undefined, backends: [] as string[] }))
+vi.mock('@/lib/ollama', () => ({
+  getOllamaClient: (backend = 'cloud') => {
+    holder.backends.push(backend)
+    return holder.fake!.client
+  },
+}))
 vi.mock('next/navigation', () => import('../helpers/next-navigation'))
 vi.mock('next/link', async () => ({ default: (await import('../helpers/next-navigation')).Link }))
 
@@ -30,8 +35,11 @@ beforeEach(async () => {
   vi.stubEnv('OLLAMA_MODEL', 'kimi-k2.6')
   vi.stubEnv('OLLAMA_CONTEXT_WINDOW', '128000')
   vi.stubEnv('SYSTEM_PROMPT', '')
+  vi.stubEnv('OLLAMA_LOCAL_HOST', '')
+  vi.stubEnv('OLLAMA_LOCAL_MODEL', '')
   vi.stubGlobal('fetch', appFetch)
   holder.fake = createFakeOllama()
+  holder.backends = []
   clearModelCaches()
   window.localStorage.clear()
   document.cookie = 'secret-interface.sidebar=; path=/; max-age=0'
@@ -383,6 +391,57 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     await screen.findByText('From gpt-oss.')
     expect(holder.fake!.requests[0].model).toBe('gpt-oss:120b')
     expect(window.localStorage.getItem('secret-interface.model')).toBe('gpt-oss:120b')
+  })
+
+  describe('switching to the local server', () => {
+    const localModels = { models: [{ name: 'qwen3:8b', model: 'qwen3:8b' }] }
+
+    it('lists its models and sends replies there, remembering the choice', async () => {
+      holder.fake!.push({ chunks: [chunk.content('From local.'), chunk.done()] })
+      const user = renderApp()
+      const model = screen.getByRole('combobox', { name: 'Model' })
+      await waitFor(() => expect(within(model).getAllByRole('option')).toHaveLength(2))
+
+      holder.fake!.client.list.mockResolvedValueOnce(localModels)
+      await user.selectOptions(screen.getByRole('combobox', { name: 'Ollama server' }), 'local')
+      await waitFor(() => expect(model).toHaveValue('qwen3:8b'))
+      expect(within(model).getAllByRole('option')).toHaveLength(1)
+      expect(screen.getByRole('combobox', { name: 'Ollama server' })).toHaveAttribute(
+        'title',
+        'Models from http://127.0.0.1:11434',
+      )
+
+      await send(user, 'Hello local')
+      await screen.findByText('From local.')
+      expect(holder.fake!.requests[0].model).toBe('qwen3:8b')
+      expect(holder.backends.at(-1)).toBe('local')
+      expect(window.localStorage.getItem('secret-interface.backend')).toBe('local')
+    })
+
+    it('starts on the remembered backend and model', async () => {
+      window.localStorage.setItem('secret-interface.backend', 'local')
+      window.localStorage.setItem('secret-interface.model.local', 'llama3.2')
+      holder.fake!.client.list.mockResolvedValueOnce({
+        models: [...localModels.models, { name: 'llama3.2', model: 'llama3.2' }],
+      })
+      renderApp()
+      expect(screen.getByRole('combobox', { name: 'Ollama server' })).toHaveValue('local')
+      await waitFor(() => expect(screen.getByRole('combobox', { name: 'Model' })).toHaveValue('llama3.2'))
+    })
+
+    it('says so when the local server is unreachable', async () => {
+      const user = renderApp()
+      await waitFor(() => expect(within(screen.getByRole('combobox', { name: 'Model' })).getAllByRole('option')).toHaveLength(2))
+      holder.fake!.client.list.mockRejectedValueOnce(
+        Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } }),
+      )
+      await user.selectOptions(screen.getByRole('combobox', { name: 'Ollama server' }), 'local')
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Could not list models from http://127.0.0.1:11434: Could not connect to Ollama',
+      )
+      expect(screen.getByRole('combobox', { name: 'Model' })).toBeDisabled()
+      expect(screen.getByRole('option', { name: 'No models' })).toBeInTheDocument()
+    })
   })
 
   it('collapses and expands the sidebar, remembering the choice in a cookie', async () => {

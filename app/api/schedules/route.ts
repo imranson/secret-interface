@@ -1,6 +1,6 @@
 import { parseRule } from '@/lib/schedule'
 import { getScheduleStore, toScheduleView } from '@/lib/schedule-store'
-import { THINK_OPTIONS, type CreateScheduleBody, type ScheduleRule } from '@/lib/types'
+import { isBackend, THINK_OPTIONS, type CreateScheduleBody, type ScheduleRule } from '@/lib/types'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -22,6 +22,9 @@ export async function POST(request: Request) {
   if (body.think !== undefined && !THINK_OPTIONS.includes(body.think)) {
     return Response.json({ error: 'Invalid think option' }, { status: 400 })
   }
+  if (body.backend !== undefined && !isBackend(body.backend)) {
+    return Response.json({ error: 'Invalid backend' }, { status: 400 })
+  }
   let rule: ScheduleRule
   try {
     rule = parseRule(body.rule)
@@ -30,7 +33,7 @@ export async function POST(request: Request) {
   }
   const store = getScheduleStore()
   const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : undefined
-  const schedule = store.create({ prompt, rule, model, think: body.think })
+  const schedule = store.create({ prompt, rule, model, backend: body.backend, think: body.think })
   await store.save(schedule)
   return Response.json({ schedule: toScheduleView(schedule) }, { status: 201 })
 }

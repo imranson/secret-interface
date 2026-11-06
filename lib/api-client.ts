@@ -1,5 +1,14 @@
 import { parseNdjson } from './ndjson'
-import type { ChatRequestBody, Conversation, ConversationSummary, CreateScheduleBody, ScheduleView, StreamEvent } from './types'
+import type {
+  Backend,
+  ChatRequestBody,
+  Conversation,
+  ConversationSummary,
+  CreateScheduleBody,
+  ModelList,
+  ScheduleView,
+  StreamEvent,
+} from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -81,12 +90,16 @@ export async function catchUpSchedules(): Promise<string[]> {
   return (await readJson<{ started: string[] }>(res)).started
 }
 
-export async function listModels(): Promise<{ defaultModel: string; models: string[]; error?: string }> {
-  return readJson(await fetch('/api/models', { cache: 'no-store' }))
+export async function listModels(backend: Backend = 'cloud'): Promise<ModelList> {
+  return readJson(await fetch(`/api/models?backend=${backend}`, { cache: 'no-store' }))
 }
 
-export async function getModelInfo(model: string): Promise<{ model: string; contextLength: number; source: string }> {
-  return readJson(await fetch(`/api/model-info?model=${encodeURIComponent(model)}`, { cache: 'no-store' }))
+export async function getModelInfo(
+  model: string,
+  backend: Backend = 'cloud',
+): Promise<{ model: string; contextLength: number; source: string }> {
+  const query = new URLSearchParams({ model, backend })
+  return readJson(await fetch(`/api/model-info?${query}`, { cache: 'no-store' }))
 }
 
 /** POSTs a message and yields the server's streamed events. Throws ApiError if the request is rejected. */

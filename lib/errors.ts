@@ -2,6 +2,9 @@
 export function describeError(error: unknown): string {
   const err = error as { message?: string; status_code?: number; name?: string } | undefined
   const message = err?.message?.trim() || 'Unknown error'
+  // Node's fetch only says "fetch failed"; the reason is on `cause`.
+  const cause = (error as { cause?: { code?: unknown } } | undefined)?.cause
+  if (cause?.code === 'ECONNREFUSED') return 'Could not connect to Ollama (connection refused). Is it running?'
   switch (err?.status_code) {
     case 401:
     case 403:

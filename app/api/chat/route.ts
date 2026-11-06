@@ -1,12 +1,20 @@
 import { isEmptyMessage, runAgent } from '@/lib/agent'
-import { getConfig, isCloudHost, normalizeModelName } from '@/lib/config'
+import { getConfig, hostFor, isCloudHost, normalizeModelName } from '@/lib/config'
 import { describeError } from '@/lib/errors'
+import { defaultModelFor } from '@/lib/models'
 import { encodeNdjson } from '@/lib/ndjson'
 import { getOllamaClient } from '@/lib/ollama'
 import { beginChat, endChat } from '@/lib/run-state'
 import { getStore, isValidConversationId, summarize } from '@/lib/store'
 import { deriveTitle } from '@/lib/title'
-import { THINK_OPTIONS, type ChatMessage, type ChatRequestBody, type Conversation, type StreamEvent } from '@/lib/types'
+import {
+  isBackend,
+  THINK_OPTIONS,
+  type ChatMessage,
+  type ChatRequestBody,
+  type Conversation,
+  type StreamEvent,
+} from '@/lib/types'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -30,9 +38,10 @@ export async function POST(request: Request) {
   if (body.editIndex !== undefined && (!Number.isInteger(body.editIndex) || body.editIndex < 0)) {
     return jsonError('Invalid edit index', 400)
   }
+  if (body.backend !== undefined && !isBackend(body.backend)) return jsonError('Invalid backend', 400)
 
   const config = getConfig()
-  if (isCloudHost(config.host) && !config.apiKey) {
+  if (isCloudHost(hostFor(config, body.backend)) && !config.apiKey) {
     return jsonError('OLLAMA_API_KEY is not set. Add it to .env.local and restart the server.', 500)
   }
 
@@ -77,7 +86,10 @@ async function reply(request: Request, body: Partial<ChatRequestBody>, text: str
     conversation = store.create({ title: deriveTitle(text) })
   }
 
-  const model = normalizeModelName(body.model?.trim() || conversation.model || config.defaultModel, config.host)
+  const backend = body.backend ?? 'cloud'
+  const host = hostFor(config, backend)
+  const model = normalizeModelName(body.model?.trim() || conversation.model || (await defaultModelFor(backend)), host)
+  if (!model) return jsonError(`No model available at ${host}. Is Ollama running there, with a model pulled?`, 400)
   const now = new Date().toISOString()
   conversation.messages.push({ role: 'user', content: text, created_at: now })
   conversation.model = model
@@ -107,7 +119,7 @@ async function reply(request: Request, body: Partial<ChatRequestBody>, text: str
       const produced: ChatMessage[] = []
       try {
         for await (const event of runAgent({
-          client: getOllamaClient(),
+          client: getOllamaClient(backend),
           model,
           history,
           systemPrompt: config.systemPrompt,

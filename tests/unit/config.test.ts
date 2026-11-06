@@ -1,6 +1,16 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { CLOUD_HOST, FALLBACK_CONTEXT_WINDOW, FALLBACK_MODEL, getConfig, isCloudHost, normalizeModelName } from '@/lib/config'
+import {
+  CLOUD_HOST,
+  configuredModel,
+  FALLBACK_CONTEXT_WINDOW,
+  FALLBACK_MODEL,
+  getConfig,
+  hostFor,
+  isCloudHost,
+  LOCAL_HOST,
+  normalizeModelName,
+} from '@/lib/config'
 import { DEFAULT_SYSTEM_PROMPT } from '@/lib/prompts'
 
 describe('normalizeModelName', () => {
@@ -28,6 +38,8 @@ describe('getConfig', () => {
   it('defaults to the Ollama web API', () => {
     const config = getConfig({})
     expect(config.host).toBe(CLOUD_HOST)
+    expect(config.localHost).toBe(LOCAL_HOST)
+    expect(config.localModel).toBeUndefined()
     expect(config.apiKey).toBeUndefined()
     expect(config.defaultModel).toBe(FALLBACK_MODEL)
     expect(config.contextWindow).toBe(FALLBACK_CONTEXT_WINDOW)
@@ -52,6 +64,14 @@ describe('getConfig', () => {
       dataDir: '/tmp/somewhere',
       systemPrompt: 'Be brief.',
     })
+  })
+
+  it('reads the local backend, keeping its model suffixes', () => {
+    const config = getConfig({ OLLAMA_LOCAL_HOST: 'http://localhost:11434/', OLLAMA_LOCAL_MODEL: 'gpt-oss:120b-cloud' })
+    expect(hostFor(config, 'local')).toBe('http://localhost:11434')
+    expect(configuredModel(config, 'local')).toBe('gpt-oss:120b-cloud')
+    expect(hostFor(config)).toBe(CLOUD_HOST)
+    expect(configuredModel(config)).toBe(FALLBACK_MODEL)
   })
 
   it('ignores blank or invalid numbers', () => {

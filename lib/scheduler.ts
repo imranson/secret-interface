@@ -1,6 +1,7 @@
 import { isEmptyMessage, runAgent } from './agent'
-import { getConfig, normalizeModelName } from './config'
+import { getConfig, hostFor, normalizeModelName } from './config'
 import { describeError } from './errors'
+import { defaultModelFor } from './models'
 import { getOllamaClient } from './ollama'
 import { beginRun, endRun } from './run-state'
 import { nextRunAt } from './schedule'
@@ -15,11 +16,14 @@ const RUN_TIMEOUT_MS = 15 * 60_000
 /** Asks the model for a fresh report. Nothing is saved here, so a failed run leaves the last report untouched. */
 async function generateReport(schedule: Schedule, signal: AbortSignal): Promise<{ messages: ChatMessage[]; model: string }> {
   const config = getConfig()
-  const model = normalizeModelName(schedule.model || config.defaultModel, config.host)
+  const backend = schedule.backend ?? 'cloud'
+  const host = hostFor(config, backend)
+  const model = normalizeModelName(schedule.model || (await defaultModelFor(backend)), host)
+  if (!model) throw new Error(`No model available at ${host}.`)
   const history: ChatMessage[] = [{ role: 'user', content: schedule.prompt, created_at: new Date().toISOString() }]
   const output: ChatMessage[] = []
   const events = runAgent({
-    client: getOllamaClient(),
+    client: getOllamaClient(backend),
     model,
     history,
     systemPrompt: config.systemPrompt,

@@ -48,11 +48,31 @@ export interface ConversationSummary {
 export const THINK_OPTIONS = ['auto', 'off', 'on', 'low', 'medium', 'high', 'max'] as const
 export type ThinkOption = (typeof THINK_OPTIONS)[number]
 
+/** Where model calls go: the Ollama cloud API (`OLLAMA_HOST`) or a local Ollama server (`OLLAMA_LOCAL_HOST`). */
+export const BACKENDS = ['cloud', 'local'] as const
+export type Backend = (typeof BACKENDS)[number]
+
+export function isBackend(value: unknown): value is Backend {
+  return (BACKENDS as readonly unknown[]).includes(value)
+}
+
+/** GET /api/models: what a backend offers. */
+export interface ModelList {
+  backend: Backend
+  host: string
+  /** The configured default, else the most recently pulled model; empty when there is neither. */
+  defaultModel: string
+  models: string[]
+  error?: string
+}
+
 export interface ChatRequestBody {
   conversationId?: string | null
   message: string
   think?: ThinkOption
   model?: string
+  /** Defaults to `cloud`. */
+  backend?: Backend
   /** The browser's IANA time zone, used by the datetime tool. */
   timezone?: string
   /**
@@ -80,6 +100,8 @@ export interface Schedule {
   prompt: string
   rule: ScheduleRule
   model?: string
+  /** Defaults to `cloud`. */
+  backend?: Backend
   think?: ThinkOption
   enabled: boolean
   /** The conversation this schedule refreshes; `null` until the first successful run. */
@@ -106,6 +128,7 @@ export interface CreateScheduleBody {
   prompt: string
   rule: ScheduleRule
   model?: string
+  backend?: Backend
   think?: ThinkOption
 }
 

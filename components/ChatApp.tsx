@@ -17,7 +17,15 @@ import { defaultScheduleDraft, describeRule, formatRunTime, ruleFromDraft, type 
 import { sidebarCookie } from '@/lib/sidebar'
 import { estimateContextTokens, estimateTokens, MESSAGE_OVERHEAD_TOKENS } from '@/lib/tokens'
 import { TOOL_DEFINITIONS } from '@/lib/tool-definitions'
-import { THINK_OPTIONS, type ChatMessage, type ConversationSummary, type ThinkOption } from '@/lib/types'
+import {
+  BACKENDS,
+  isBackend,
+  THINK_OPTIONS,
+  type Backend,
+  type ChatMessage,
+  type ConversationSummary,
+  type ThinkOption,
+} from '@/lib/types'
 import { Composer } from './Composer'
 import { ContextMeter } from './ContextMeter'
 import { ArchiveIcon, RepeatIcon, RestoreIcon, SidebarIcon } from './Icons'
@@ -36,8 +44,14 @@ const THINK_LABELS: Record<ThinkOption, string> = {
   max: 'Thinking: max',
 }
 
+const BACKEND_LABELS: Record<Backend, string> = { cloud: 'Cloud', local: 'Local' }
+
 const PREF_THINK = 'secret-interface.think'
 const PREF_MODEL = 'secret-interface.model'
+const PREF_BACKEND = 'secret-interface.backend'
+
+/** Each backend remembers its own model; the cloud keeps the original key. */
+const modelPref = (backend: Backend) => (backend === 'cloud' ? PREF_MODEL : `${PREF_MODEL}.${backend}`)
 
 function readPref(key: string): string | null {
   try {
@@ -121,7 +135,11 @@ export function ChatApp({
   const [streaming, setStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [models, setModels] = useState<string[]>([defaultModel])
+  const [backend, setBackend] = useState<Backend>('cloud')
+  // The host the model list came from, shown as the backend picker's tooltip.
+  const [host, setHost] = useState<string | null>(null)
+  // `null` while the backend's models are loading.
+  const [models, setModels] = useState<string[] | null>([defaultModel])
   const [model, setModel] = useState(defaultModel)
   const [think, setThink] = useState<ThinkOption>('auto')
   const [contextWindow, setContextWindow] = useState(defaultContextWindow)
@@ -136,6 +154,8 @@ export function ChatApp({
   // Bumped whenever the view changes conversation, so late events from an old stream are ignored.
   const runRef = useRef(0)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // Bumped per model-list request, so switching backends quickly can't apply a stale list.
+  const modelsRequestRef = useRef(0)
 
   const scheduling = useSchedules((schedule) => {
     listConversations()
@@ -161,26 +181,55 @@ export function ChatApp({
     if (openScheduleId && openScheduleUnread) markRead(openScheduleId).catch(() => {})
   }, [openScheduleId, openScheduleUnread, markRead])
 
+  const loadModels = useCallback(async (target: Backend) => {
+    const request = ++modelsRequestRef.current
+    try {
+      const list = await listModels(target)
+      if (request !== modelsRequestRef.current) return
+      setModels(list.models)
+      setHost(list.host)
+      const saved = readPref(modelPref(target))
+      setModel(saved && list.models.includes(saved) ? saved : list.defaultModel)
+      if (list.error) setError(`Could not list models from ${list.host}: ${list.error}`)
+    } catch (e) {
+      if (request !== modelsRequestRef.current) return
+      // Keep the server-rendered default on the cloud; a local list has nothing to fall back to.
+      setModels((current) => current ?? [])
+      setError(`Could not list models: ${messageOf(e)}`)
+    }
+  }, [])
+
+  /** Clears the model until the new backend's list arrives, so a reply can't pair one backend with another's model. */
+  const switchBackend = (next: Backend) => {
+    setBackend(next)
+    setModels(null)
+    setModel('')
+    setHost(null)
+    setError(null)
+    loadModels(next)
+  }
+
   useEffect(() => {
     listConversations()
       .then(setConversations)
       .catch((e) => setError(`Could not load conversations: ${messageOf(e)}`))
-    listModels()
-      .then(({ defaultModel: serverDefault, models: available }) => {
-        setModels(available)
-        const saved = readPref(PREF_MODEL)
-        setModel(saved && available.includes(saved) ? saved : serverDefault)
-      })
-      .catch(() => {
-        // Keep the server-rendered default model.
-      })
+    const savedBackend = readPref(PREF_BACKEND)
+    const initialBackend = isBackend(savedBackend) ? savedBackend : 'cloud'
+    if (initialBackend !== 'cloud') {
+      // The server rendered the cloud default, which means nothing to another backend.
+      setBackend(initialBackend)
+      setModels(null)
+      setModel('')
+    }
+    loadModels(initialBackend)
     const savedThink = readPref(PREF_THINK)
     if (savedThink && (THINK_OPTIONS as readonly string[]).includes(savedThink)) setThink(savedThink as ThinkOption)
-  }, [])
+  }, [loadModels])
 
   useEffect(() => {
+    if (!model) return
     let cancelled = false
-    getModelInfo(model)
+    getModelInfo(model, backend)
       .then((info) => {
         if (!cancelled) setContextWindow(info.contextLength)
       })
@@ -190,7 +239,7 @@ export function ChatApp({
     return () => {
       cancelled = true
     }
-  }, [model, defaultContextWindow])
+  }, [model, backend, defaultContextWindow])
 
   const historyTokens = useMemo(
     () => estimateContextTokens({ systemPrompt, messages: current.messages, tools: TOOL_DEFINITIONS }),
@@ -335,6 +384,7 @@ export function ChatApp({
           message,
           think,
           model,
+          backend,
           timezone: browserTimeZone(),
           ...(editIndex !== undefined && { editIndex }),
         },
@@ -434,7 +484,7 @@ export function ChatApp({
     const text = draft.trim()
     if (!text || !scheduleRule) return
     try {
-      const schedule = await scheduling.create({ prompt: text, rule: scheduleRule, model, think })
+      const schedule = await scheduling.create({ prompt: text, rule: scheduleRule, model, backend, think })
       setDraft('')
       setScheduleDraft(null)
       setView('scheduled')
@@ -596,14 +646,33 @@ export function ChatApp({
                 </button>
                 <select
                   className="pill-select"
-                  aria-label="Model"
-                  value={model}
+                  aria-label="Ollama server"
+                  title={host ? `Models from ${host}` : undefined}
+                  value={backend}
                   onChange={(e) => {
-                    setModel(e.target.value)
-                    writePref(PREF_MODEL, e.target.value)
+                    const next = e.target.value as Backend
+                    writePref(PREF_BACKEND, next)
+                    switchBackend(next)
                   }}
                 >
-                  {models.map((m) => (
+                  {BACKENDS.map((b) => (
+                    <option key={b} value={b}>
+                      {BACKEND_LABELS[b]}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="pill-select"
+                  aria-label="Model"
+                  value={model}
+                  disabled={!models?.length}
+                  onChange={(e) => {
+                    setModel(e.target.value)
+                    writePref(modelPref(backend), e.target.value)
+                  }}
+                >
+                  {!models?.length && <option value="">{models ? 'No models' : 'Loading models…'}</option>}
+                  {models?.map((m) => (
                     <option key={m} value={m}>
                       {m}
                     </option>

@@ -16,4 +16,9 @@ describe('describeError', () => {
     expect(describeError(new Error('fetch failed'))).toBe('fetch failed')
     expect(describeError(undefined)).toBe('Unknown error')
   })
+
+  it('explains a refused connection, which fetch hides on `cause`', () => {
+    const error = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } })
+    expect(describeError(error)).toBe('Could not connect to Ollama (connection refused). Is it running?')
+  })
 })
