@@ -1,85 +1,171 @@
-import { existsSync } from 'node:fs'
-import { mkdir, readFile, utimes, writeFile } from 'node:fs/promises'
-import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { PGlite } from '@electric-sql/pglite'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  ConversationConflictError,
   ConversationStore,
+  DATABASE_URL_MISSING,
   getStore,
   isValidConversationId,
+  missingDatabaseResponse,
   newConversationId,
   normalizeConversation,
   summarize,
+  type Queryable,
 } from '@/lib/store'
-import { makeTempDataDir } from '../helpers/temp-data'
+import type { Conversation } from '@/lib/types'
 
-let dir: string
-let cleanup: () => Promise<void>
+// A PGlite of this file's own, used directly, so tests can look at the table.
+let db: PGlite
 let store: ConversationStore
 
-beforeEach(async () => {
-  ;({ dir, cleanup } = await makeTempDataDir())
-  store = new ConversationStore(dir)
+beforeAll(async () => {
+  db = new PGlite()
+  await db.waitReady
 })
 
-afterEach(() => cleanup())
+afterAll(() => db.close())
 
-async function writeRaw(relative: string, value: unknown) {
-  const file = path.join(dir, 'conversations', relative)
-  await mkdir(path.dirname(file), { recursive: true })
-  await writeFile(file, typeof value === 'string' ? value : JSON.stringify(value))
-  return file
+beforeEach(async () => {
+  await db.exec('DROP TABLE IF EXISTS conversations')
+  store = new ConversationStore(db)
+})
+
+async function seed(title: string, updated_at: string, init: Partial<Conversation> = {}): Promise<Conversation> {
+  const conversation = { ...store.create({ title, model: 'm' }), updated_at, ...init }
+  conversation.messages.push({ role: 'user', content: title }, { role: 'assistant', content: `Re: ${title}` })
+  await store.save(conversation)
+  return conversation
 }
 
 describe('ids', () => {
-  it('generates 32-character hex ids like existing files', () => {
+  it('generates 32-character hex ids', () => {
     const id = newConversationId()
     expect(id).toMatch(/^[0-9a-f]{32}$/)
     expect(isValidConversationId(id)).toBe(true)
   })
 
-  it('rejects path traversal and odd ids', () => {
+  it('rejects odd ids', () => {
     for (const bad of ['../etc/passwd', 'a/b', '', 'x'.repeat(200), 'a.json', null, 42]) {
       expect(isValidConversationId(bad)).toBe(false)
     }
-    expect(() => store.fileFor('../x', false)).toThrow()
   })
 })
 
-describe('save / get', () => {
-  it('round-trips a conversation to <dataDir>/conversations/<id>.json', async () => {
-    const conversation = store.create({ model: 'm', title: 'Hello' })
-    conversation.messages.push({ role: 'user', content: 'Hi' }, { role: 'assistant', content: 'Hey', thinking: 'hmm' })
+describe('ConversationStore', () => {
+  it('creates its table on first use and round-trips a conversation', async () => {
+    const conversation = store.create({ model: 'kimi-k2.6', title: 'Hello' })
+    conversation.messages.push(
+      { role: 'user', content: 'Hi', created_at: '2026-11-01T10:00:00.000Z' },
+      {
+        role: 'assistant',
+        content: '',
+        thinking: 'hmm',
+        tool_calls: [{ function: { name: 'calculate', arguments: { expression: '2+2' } } }],
+        attachments: ['kept.png'],
+      },
+      { role: 'tool', content: '4', tool_name: 'calculate' },
+      { role: 'assistant', content: 'Four.' },
+    )
     await store.save(conversation)
 
-    const file = path.join(dir, 'conversations', `${conversation.id}.json`)
-    const onDisk = JSON.parse(await readFile(file, 'utf8'))
-    expect(onDisk).not.toHaveProperty('archived')
-    expect(onDisk.messages).toHaveLength(2)
-
     expect(await store.get(conversation.id)).toEqual(conversation)
+    const [row] = (await db.query<{ message_count: number }>('SELECT message_count FROM conversations')).rows
+    expect(row.message_count).toBe(3)
   })
 
   it('returns null for unknown or invalid ids', async () => {
     expect(await store.get('0'.repeat(32))).toBeNull()
-    expect(await store.get('../../secrets')).toBeNull()
+    expect(await store.get("x' OR '1'='1")).toBeNull()
+    await expect(store.save({ ...store.create(), id: '../bad' })).rejects.toThrow('Invalid conversation id')
   })
 
-  it('preserves unknown fields from older files when re-saving', async () => {
-    await writeRaw('legacy1.json', {
-      id: 'legacy1',
-      title: 'Old',
-      created_at: '2026-01-01T00:00:00Z',
-      custom_setting: { temperature: 0.2 },
-      messages: [{ role: 'user', content: 'hi', attachments: ['a.png'] }],
+  it('lists summaries newest first, split by archived', async () => {
+    await seed('Older', '2026-09-01T00:00:00.000Z')
+    await seed('Newer', '2026-09-20T00:00:00.000Z')
+    const archived = await seed('Shelved', '2026-10-01T00:00:00.000Z')
+    await store.setArchived(archived.id, true)
+
+    const list = await store.list()
+    expect(list.map((c) => c.title)).toEqual(['Newer', 'Older'])
+    expect(list[0]).toEqual({
+      id: expect.any(String),
+      title: 'Newer',
+      created_at: expect.any(String),
+      updated_at: '2026-09-20T00:00:00.000Z',
+      model: 'm',
+      archived: false,
+      message_count: 2,
     })
-    const conversation = (await store.get('legacy1'))!
-    conversation.messages.push({ role: 'assistant', content: 'hello' })
+    expect((await store.list(true)).map((c) => c.id)).toEqual([archived.id])
+  })
+
+  it('replaces the messages, title and model on save but keeps created_at', async () => {
+    const conversation = await seed('First', '2026-09-01T00:00:00.000Z')
+    const created = conversation.created_at
+    conversation.messages = [{ role: 'user', content: 'Edited' }]
+    conversation.title = 'Renamed'
+    conversation.model = undefined
+    conversation.updated_at = '2026-09-02T00:00:00.000Z'
+    await store.save({ ...conversation, created_at: '2000-01-01T00:00:00.000Z' })
+
+    expect(await store.get(conversation.id)).toEqual({ ...conversation, created_at: created })
+    expect((await store.list())[0]).toMatchObject({ title: 'Renamed', message_count: 1 })
+  })
+
+  it('archives and restores, idempotently', async () => {
+    const conversation = await seed('Keep me', '2026-09-01T00:00:00.000Z')
+    expect(await store.setArchived(conversation.id, true)).toMatchObject({ id: conversation.id, archived: true })
+    expect(await store.setArchived(conversation.id, true)).toMatchObject({ archived: true })
+    expect(await store.list()).toEqual([])
+    expect(await store.get(conversation.id)).toMatchObject({ archived: true, messages: conversation.messages })
+
+    expect(await store.setArchived(conversation.id, false)).toMatchObject({ archived: false, message_count: 2 })
+    expect((await store.list()).map((c) => c.id)).toEqual([conversation.id])
+    expect(await store.setArchived('missing', true)).toBeNull()
+    expect(await store.setArchived('../bad', true)).toBeNull()
+  })
+
+  it('keeps a conversation archived if a reply is saved after it was archived', async () => {
+    const conversation = await seed('Streaming', '2026-09-01T00:00:00.000Z')
+    await store.setArchived(conversation.id, true)
+    conversation.messages.push({ role: 'assistant', content: 'late reply' })
     await store.save(conversation)
-    const onDisk = JSON.parse(await readFile(path.join(dir, 'conversations', 'legacy1.json'), 'utf8'))
-    expect(onDisk.custom_setting).toEqual({ temperature: 0.2 })
-    expect(onDisk.messages[0].attachments).toEqual(['a.png'])
-    expect(onDisk.messages).toHaveLength(2)
+
+    expect(conversation.archived).toBe(true)
+    expect(await store.list()).toEqual([])
+    expect((await store.get(conversation.id))?.messages.at(-1)?.content).toBe('late reply')
+  })
+
+  it('strips characters Postgres cannot store', async () => {
+    const conversation = store.create({ title: 'Nul\0 title' })
+    conversation.messages.push({ role: 'tool', content: 'binary\0page \ud83d end' })
+    await store.save(conversation)
+    const saved = await store.get(conversation.id)
+    expect(saved?.title).toBe('Nul title')
+    expect(saved?.messages[0].content).toBe('binarypage � end')
+  })
+
+  it('imports a conversation once and never overwrites one already stored', async () => {
+    const conversation = { ...store.create({ title: 'From disk' }), archived: true }
+    conversation.messages.push({ role: 'user', content: 'old' })
+    expect(await store.importConversation(conversation)).toBe(true)
+    expect(await store.importConversation({ ...conversation, title: 'Changed', messages: [] })).toBe(false)
+    expect(await store.get(conversation.id)).toEqual(conversation)
+  })
+
+  it('retries setting up the table after a failure', async () => {
+    let fail = true
+    const flaky: Queryable = {
+      query: (text, params) => {
+        if (fail) {
+          fail = false
+          return Promise.reject(new Error('connection refused'))
+        }
+        return db.query(text, params)
+      },
+    }
+    const retrying = new ConversationStore(flaky)
+    await expect(retrying.list()).rejects.toThrow('connection refused')
+    expect(await retrying.list()).toEqual([])
   })
 })
 
@@ -133,105 +219,30 @@ describe('normalizeConversation', () => {
   })
 })
 
-describe('list', () => {
-  it('returns [] when the folder does not exist', async () => {
-    expect(await store.list()).toEqual([])
-    expect(await store.list(true)).toEqual([])
-  })
-
-  it('lists summaries newest first and skips unreadable or foreign files', async () => {
-    await writeRaw('old.json', { title: 'Old', updated_at: '2026-01-01T00:00:00Z', messages: [{ role: 'user', content: 'x' }] })
-    await writeRaw('new.json', {
-      title: 'New',
-      updated_at: '2026-03-01T00:00:00Z',
-      messages: [
-        { role: 'user', content: 'x' },
-        { role: 'assistant', content: 'y' },
-        { role: 'tool', content: 'z' },
-      ],
-    })
-    await writeRaw('broken.json', '{not json')
-    await writeRaw('notes.txt', 'ignore me')
-    await writeRaw('archived/arch.json', { title: 'Archived one', messages: [] })
-
-    const list = await store.list()
-    expect(list.map((c) => c.title)).toEqual(['New', 'Old'])
-    expect(list[0]).toMatchObject({ id: 'new', archived: false, message_count: 2 })
-
-    const archived = await store.list(true)
-    expect(archived.map((c) => c.id)).toEqual(['arch'])
-    expect(archived[0].archived).toBe(true)
-  })
-
-  it('reuses cached summaries until a file changes', async () => {
-    const file = await writeRaw('c1.json', { title: 'First', messages: [] })
-    expect((await store.list())[0].title).toBe('First')
-    await writeFile(file, JSON.stringify({ title: 'Second title', messages: [] }))
-    const later = new Date(Date.now() + 5000)
-    await utimes(file, later, later)
-    expect((await store.list())[0].title).toBe('Second title')
-  })
-})
-
-describe('archiving', () => {
-  it('moves the file into conversations/archived and back', async () => {
-    const conversation = store.create()
-    conversation.messages.push({ role: 'user', content: 'keep me' })
-    await store.save(conversation)
-    const active = path.join(dir, 'conversations', `${conversation.id}.json`)
-    const archivedFile = path.join(dir, 'conversations', 'archived', `${conversation.id}.json`)
-
-    const summary = await store.setArchived(conversation.id, true)
-    expect(summary).toMatchObject({ id: conversation.id, archived: true })
-    expect(existsSync(active)).toBe(false)
-    expect(existsSync(archivedFile)).toBe(true)
-    expect(await store.list()).toEqual([])
-    expect((await store.list(true)).map((c) => c.id)).toEqual([conversation.id])
-    expect((await store.get(conversation.id))?.archived).toBe(true)
-
-    // Idempotent.
-    expect(await store.setArchived(conversation.id, true)).toMatchObject({ archived: true })
-
-    const restored = await store.setArchived(conversation.id, false)
-    expect(restored).toMatchObject({ archived: false })
-    expect(existsSync(active)).toBe(true)
-    expect(existsSync(archivedFile)).toBe(false)
-    expect((await store.get(conversation.id))?.messages).toEqual([{ role: 'user', content: 'keep me' }])
-  })
-
-  it('returns null for missing conversations', async () => {
-    expect(await store.setArchived('missing', true)).toBeNull()
-    expect(await store.setArchived('../bad', true)).toBeNull()
-  })
-
-  it('refuses to overwrite when a conversation exists in both folders', async () => {
-    await writeRaw('dup.json', { messages: [] })
-    await writeRaw('archived/dup.json', { messages: [] })
-    await expect(store.setArchived('dup', true)).rejects.toBeInstanceOf(ConversationConflictError)
-  })
-
-  it('saves into the archive if the conversation was archived while a reply streamed', async () => {
-    const conversation = store.create()
-    await store.save(conversation)
-    await store.setArchived(conversation.id, true)
-    conversation.messages.push({ role: 'assistant', content: 'late reply' })
-    await store.save(conversation)
-    expect(existsSync(path.join(dir, 'conversations', `${conversation.id}.json`))).toBe(false)
-    const saved = await store.get(conversation.id)
-    expect(saved).toMatchObject({ archived: true, messages: [{ role: 'assistant', content: 'late reply' }] })
-  })
-})
-
-describe('summarize / getStore', () => {
+describe('summarize', () => {
   it('counts user and assistant messages only', () => {
     const conversation = store.create()
     conversation.messages.push({ role: 'user', content: 'a' }, { role: 'tool', content: 'b' }, { role: 'assistant', content: 'c' })
     expect(summarize(conversation)).toMatchObject({ message_count: 2 })
     expect(summarize(conversation)).not.toHaveProperty('messages')
   })
+})
 
-  it('returns one store per data directory', () => {
-    expect(getStore(dir)).toBe(getStore(dir))
-    expect(getStore(dir)).not.toBe(getStore(path.join(dir, 'other')))
+describe('getStore', () => {
+  it('uses DATABASE_URL, one store per connection string', () => {
+    const first = getStore()
+    expect(first).toBeInstanceOf(ConversationStore)
+    expect(getStore()).toBe(first)
+    vi.stubEnv('DATABASE_URL', 'postgres://user:pass@127.0.0.1:1/other')
+    expect(getStore()).not.toBe(first)
+  })
+
+  it('explains a missing DATABASE_URL', async () => {
+    expect(missingDatabaseResponse()).toBeNull()
+    vi.stubEnv('DATABASE_URL', '')
+    expect(() => getStore()).toThrow(DATABASE_URL_MISSING)
+    const response = missingDatabaseResponse()!
+    expect(response.status).toBe(500)
+    expect(await response.json()).toEqual({ error: DATABASE_URL_MISSING })
   })
 })

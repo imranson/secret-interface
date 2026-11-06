@@ -1,26 +1,12 @@
-import { existsSync } from 'node:fs'
-import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { GET as getOne, PATCH } from '@/app/api/conversations/[id]/route'
 import { GET as list } from '@/app/api/conversations/route'
 import { getStore } from '@/lib/store'
 import type { Conversation, ConversationSummary } from '@/lib/types'
-import { makeTempDataDir } from '../helpers/temp-data'
-
-let dataDir: string
-let cleanup: () => Promise<void>
-
-beforeEach(async () => {
-  ;({ dir: dataDir, cleanup } = await makeTempDataDir())
-  vi.stubEnv('DATA_DIR', dataDir)
-})
-
-afterEach(() => cleanup())
-
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) })
 
 async function seed(title: string, updated_at: string): Promise<Conversation> {
-  const store = getStore(dataDir)
+  const store = getStore()
   const conversation = { ...store.create({ title }), updated_at }
   conversation.messages.push({ role: 'user', content: title }, { role: 'assistant', content: `Re: ${title}` })
   await store.save(conversation)
@@ -49,6 +35,14 @@ describe('conversation history API', () => {
     expect((await response.json()).conversation).toEqual(conversation)
   })
 
+  it('explains a missing DATABASE_URL', async () => {
+    vi.stubEnv('DATABASE_URL', '')
+    const response = await list(new Request('http://localhost/api/conversations'))
+    expect(response.status).toBe(500)
+    expect((await response.json()).error).toMatch(/DATABASE_URL is not set/)
+    expect((await getOne(new Request('http://localhost'), ctx('a'.repeat(32)))).status).toBe(500)
+  })
+
   it('404s and 400s appropriately', async () => {
     expect((await getOne(new Request('http://localhost'), ctx('a'.repeat(32)))).status).toBe(404)
     expect((await getOne(new Request('http://localhost'), ctx('..%2F..'))).status).toBe(400)
@@ -59,15 +53,13 @@ describe('archive API', () => {
   const patch = (id: string, body: unknown) =>
     PATCH(new Request('http://localhost', { method: 'PATCH', body: JSON.stringify(body) }), ctx(id))
 
-  it('moves a conversation to the archive folder and back', async () => {
+  it('archives a conversation and restores it', async () => {
     const keep = await seed('Keep', '2026-09-02T00:00:00.000Z')
     const old = await seed('Archive me', '2026-09-01T00:00:00.000Z')
 
     const archived = await patch(old.id, { archived: true })
     expect(archived.status).toBe(200)
     expect((await archived.json()).conversation).toMatchObject({ id: old.id, archived: true })
-    expect(existsSync(path.join(dataDir, 'conversations', 'archived', `${old.id}.json`))).toBe(true)
-    expect(existsSync(path.join(dataDir, 'conversations', `${old.id}.json`))).toBe(false)
 
     expect((await listJson()).map((c) => c.id)).toEqual([keep.id])
     expect((await listJson(true)).map((c) => c.id)).toEqual([old.id])

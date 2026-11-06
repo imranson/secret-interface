@@ -1,6 +1,3 @@
-import { existsSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
-import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { applyStreamEvent } from '@/lib/chat-reducer'
 import { clearModelCaches } from '@/lib/models'
@@ -58,9 +55,8 @@ async function events(response: Response): Promise<StreamEvent[]> {
   return out
 }
 
-async function readConversationFile(id: string, archived = false) {
-  const file = path.join(dataDir, 'conversations', ...(archived ? ['archived'] : []), `${id}.json`)
-  return JSON.parse(await readFile(file, 'utf8'))
+async function readConversation(id: string) {
+  return (await getStore().get(id))!
 }
 
 describe('POST /api/chat', () => {
@@ -85,7 +81,7 @@ describe('POST /api/chat', () => {
       { role: 'user', content: 'Say hello' },
     ])
 
-    const saved = await readConversationFile(start.conversation.id)
+    const saved = await readConversation(start.conversation.id)
     expect(saved).toMatchObject({ id: start.conversation.id, title: 'Say hello', model: 'kimi-k2.6' })
     expect(saved.messages).toEqual([
       expect.objectContaining({ role: 'user', content: 'Say hello' }),
@@ -118,7 +114,7 @@ describe('POST /api/chat', () => {
     expect(holder.fake!.client.webFetch).toHaveBeenCalledWith({ url: 'https://ollama.com/' })
 
     const id = (stream[0] as Extract<StreamEvent, { type: 'start' }>).conversation.id
-    const saved = await readConversationFile(id)
+    const saved = await readConversation(id)
     expect(saved.messages.map((m: ChatMessage) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant', 'tool', 'assistant'])
 
     // What the browser builds from the stream matches what the server stored.
@@ -145,7 +141,7 @@ describe('POST /api/chat', () => {
       { role: 'assistant', content: 'First answer' },
       { role: 'user', content: 'Second question' },
     ])
-    const saved = await readConversationFile(id)
+    const saved = await readConversation(id)
     expect(saved.messages).toHaveLength(4)
     expect(saved.title).toBe('First question')
     expect(saved.model).toBe('gpt-oss:120b')
@@ -166,7 +162,7 @@ describe('POST /api/chat', () => {
     // Ollama saw only the revised message, not the two old turns.
     expect(holder.fake!.requests[2].messages!.slice(1)).toEqual([{ role: 'user', content: 'First question, revised' }])
 
-    const saved = await readConversationFile(id)
+    const saved = await readConversation(id)
     expect(saved.messages).toHaveLength(2)
     expect(saved.messages[0]).toMatchObject({ role: 'user', content: 'First question, revised' })
     expect(saved.messages[1]).toMatchObject({ role: 'assistant', content: 'Revised answer' })
@@ -177,7 +173,7 @@ describe('POST /api/chat', () => {
     expect((await post({ message: 'hi', editIndex: -1 })).status).toBe(400)
     expect((await post({ message: 'hi', editIndex: 1.5 })).status).toBe(400)
 
-    const store = getStore(dataDir)
+    const store = getStore()
     const conversation = store.create()
     conversation.messages.push({ role: 'user', content: 'Only one message' })
     await store.save(conversation)
@@ -205,7 +201,7 @@ describe('POST /api/chat', () => {
       message: 'Ollama rejected the request (401): unauthorized. Check OLLAMA_API_KEY in .env.local.',
     })
     const id = (stream[0] as Extract<StreamEvent, { type: 'start' }>).conversation.id
-    expect((await readConversationFile(id)).messages).toEqual([expect.objectContaining({ role: 'user', content: 'Hi' })])
+    expect((await readConversation(id)).messages).toEqual([expect.objectContaining({ role: 'user', content: 'Hi' })])
   })
 
   it('saves the partial reply when the client disconnects', async () => {
@@ -220,7 +216,7 @@ describe('POST /api/chat', () => {
     controller.abort()
 
     await vi.waitFor(async () => {
-      const saved = await readConversationFile(start.conversation.id)
+      const saved = await readConversation(start.conversation.id)
       expect(saved.messages).toEqual([
         expect.objectContaining({ role: 'user' }),
         expect.objectContaining({ role: 'assistant', content: 'Half an ans' }),
@@ -238,13 +234,14 @@ describe('POST /api/chat', () => {
   })
 
   it('refuses to continue archived conversations', async () => {
-    const store = getStore(dataDir)
+    const store = getStore()
     const conversation = store.create()
     await store.save(conversation)
     await store.setArchived(conversation.id, true)
     const response = await post({ message: 'hi', conversationId: conversation.id })
     expect(response.status).toBe(409)
-    expect(existsSync(path.join(dataDir, 'conversations', `${conversation.id}.json`))).toBe(false)
+    expect(await store.list()).toEqual([])
+    expect(await store.get(conversation.id)).toMatchObject({ archived: true, messages: [] })
   })
 
   it('explains a missing API key', async () => {
@@ -252,6 +249,14 @@ describe('POST /api/chat', () => {
     const response = await post({ message: 'hi' })
     expect(response.status).toBe(500)
     expect((await response.json()).error).toMatch(/OLLAMA_API_KEY is not set/)
+  })
+
+  it('explains a missing DATABASE_URL', async () => {
+    vi.stubEnv('DATABASE_URL', '')
+    const response = await post({ message: 'hi' })
+    expect(response.status).toBe(500)
+    expect((await response.json()).error).toMatch(/DATABASE_URL is not set/)
+    expect(holder.fake!.client.chat).not.toHaveBeenCalled()
   })
 
   describe('on the local backend', () => {
@@ -276,7 +281,7 @@ describe('POST /api/chat', () => {
       const response = await post({ message: 'hi', backend: 'local' })
       expect(response.status).toBe(400)
       expect((await response.json()).error).toMatch(/No model available at http:\/\/127\.0\.0\.1:11434/)
-      expect(await getStore(dataDir).list()).toEqual([])
+      expect(await getStore().list()).toEqual([])
     })
   })
 

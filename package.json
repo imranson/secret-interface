@@ -12,26 +12,31 @@
     "test:watch": "vitest",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
-    "test:live": "LIVE=1 vitest run tests/live"
+    "test:live": "LIVE=1 vitest run tests/live",
+    "db:import": "tsx scripts/import-conversations.ts"
   },
   "dependencies": {
     "mathjs": "^15.2.0",
     "next": "^16.3.6",
     "ollama": "^0.6.3",
+    "pg": "^8.23.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.7",
     "@types/node": "^24",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "jsdom": "^30.1.1",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vitest": "^5.0.2"
   }

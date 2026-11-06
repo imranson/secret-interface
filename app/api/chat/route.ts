@@ -5,7 +5,7 @@ import { defaultModelFor } from '@/lib/models'
 import { encodeNdjson } from '@/lib/ndjson'
 import { getOllamaClient } from '@/lib/ollama'
 import { beginChat, endChat } from '@/lib/run-state'
-import { getStore, isValidConversationId, summarize } from '@/lib/store'
+import { getStore, isValidConversationId, missingDatabaseResponse, summarize } from '@/lib/store'
 import { deriveTitle } from '@/lib/title'
 import {
   isBackend,
@@ -44,6 +44,8 @@ export async function POST(request: Request) {
   if (isCloudHost(hostFor(config, body.backend)) && !config.apiKey) {
     return jsonError('OLLAMA_API_KEY is not set. Add it to .env.local and restart the server.', 500)
   }
+  const missing = missingDatabaseResponse()
+  if (missing) return missing
 
   // Claimed before the conversation is read, so a schedule can't refresh it underneath this reply.
   const id = body.conversationId || null

@@ -1,16 +1,14 @@
 // @vitest-environment jsdom
-import { existsSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
-import path from 'node:path'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatApp, type ChatAppProps } from '@/components/ChatApp'
 import { clearModelCaches } from '@/lib/models'
 import { DEFAULT_SYSTEM_PROMPT } from '@/lib/prompts'
 import { getScheduleStore } from '@/lib/schedule-store'
 import { getStore } from '@/lib/store'
 import { appFetch } from '../helpers/app-fetch'
+import { warmUpDatabase } from '../helpers/database'
 import { chunk, createFakeOllama, HttpError, type FakeOllama } from '../helpers/fake-ollama'
 import { makeTempDataDir } from '../helpers/temp-data'
 
@@ -26,6 +24,8 @@ vi.mock('next/link', async () => ({ default: (await import('../helpers/next-navi
 
 let dataDir: string
 let cleanup: () => Promise<void>
+
+beforeAll(warmUpDatabase)
 
 beforeEach(async () => {
   ;({ dir: dataDir, cleanup } = await makeTempDataDir())
@@ -69,7 +69,7 @@ const sidebar = () => screen.getByRole('complementary', { name: 'Conversation hi
 const idle = () => waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeInTheDocument())
 
 async function seedConversation(title: string, archived = false) {
-  const store = getStore(dataDir)
+  const store = getStore()
   const conversation = store.create({ title })
   conversation.messages.push({ role: 'user', content: title }, { role: 'assistant', content: `An answer about *${title}*.` })
   await store.save(conversation)
@@ -104,9 +104,9 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     expect(within(sidebar()).getByRole('link', { name: 'Show me a table' })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('heading', { level: 1, name: 'Show me a table' })).toBeInTheDocument()
 
-    const [summary] = await getStore(dataDir).list()
-    const saved = JSON.parse(await readFile(path.join(dataDir, 'conversations', `${summary.id}.json`), 'utf8'))
-    expect(saved.messages.map((m: { role: string }) => m.role)).toEqual(['user', 'assistant'])
+    const [summary] = await getStore().list()
+    const saved = (await getStore().get(summary.id))!
+    expect(saved.messages.map((m) => m.role)).toEqual(['user', 'assistant'])
     expect(holder.fake!.requests[0]).toMatchObject({ model: 'kimi-k2.6', stream: true })
     expect(holder.fake!.requests[0]).not.toHaveProperty('think')
   })
@@ -202,7 +202,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
       .map((b) => b.textContent)
     expect(titles).toContain('Brand new topic')
     expect(titles).toContain('Earlier chat')
-    expect(await getStore(dataDir).list()).toHaveLength(2)
+    expect(await getStore().list()).toHaveLength(2)
     // The new conversation did not include the old one's messages.
     expect(holder.fake!.requests[0].messages!.map((m) => m.content)).toEqual([DEFAULT_SYSTEM_PROMPT, 'Brand new topic'])
   })
@@ -216,7 +216,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     await send(user, 'Brand new topic')
     await screen.findByText('Fresh reply.')
     await idle()
-    const created = (await getStore(dataDir).list()).find((c) => c.title === 'Brand new topic')!
+    const created = (await getStore().list()).find((c) => c.title === 'Brand new topic')!
     // The new conversation takes over the URL of the blank one rather than adding a history entry.
     expect(window.location.pathname).toBe(`/c/${created.id}`)
     expect(window.history.length).toBe(entries)
@@ -253,8 +253,8 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     expect(screen.getByRole('article', { name: 'Assistant message' })).toHaveTextContent('Revised answer.')
     expect(screen.getByRole('article', { name: 'Assistant message' })).not.toHaveTextContent('An answer about')
 
-    const [summary] = await getStore(dataDir).list()
-    const saved = await getStore(dataDir).get(summary.id)
+    const [summary] = await getStore().list()
+    const saved = await getStore().get(summary.id)
     expect(saved!.messages).toHaveLength(2)
     expect(saved!.messages[0]).toMatchObject({ role: 'user', content: 'Revised question' })
     expect(saved!.messages[1]).toMatchObject({ role: 'assistant', content: 'Revised answer.' })
@@ -303,11 +303,11 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     await send(user, 'Something else')
     await screen.findByText('Fresh start.')
     await idle()
-    const [created] = await getStore(dataDir).list()
+    const [created] = await getStore().list()
     expect(window.location.pathname).toBe(`/c/${created.id}`)
   })
 
-  it('archives conversations into the archive folder and restores them', async () => {
+  it('archives conversations and restores them', async () => {
     const conversation = await seedConversation('Old plans')
     const user = renderApp()
 
@@ -315,8 +315,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     await waitFor(() =>
       expect(within(sidebar()).queryByRole('link', { name: 'Old plans' })).not.toBeInTheDocument(),
     )
-    expect(existsSync(path.join(dataDir, 'conversations', 'archived', `${conversation.id}.json`))).toBe(true)
-    expect(existsSync(path.join(dataDir, 'conversations', `${conversation.id}.json`))).toBe(false)
+    expect(await getStore().get(conversation.id)).toMatchObject({ archived: true })
 
     await user.click(within(sidebar()).getByRole('button', { name: /^Archived/ }))
     await user.click(await within(sidebar()).findByRole('link', { name: 'Old plans' }))
@@ -327,7 +326,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
 
     await user.click(screen.getByRole('button', { name: 'Restore to continue' }))
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled())
-    expect(existsSync(path.join(dataDir, 'conversations', `${conversation.id}.json`))).toBe(true)
+    expect(await getStore().get(conversation.id)).toMatchObject({ archived: false })
     await user.click(within(sidebar()).getByRole('button', { name: 'Recent' }))
     expect(within(sidebar()).getByRole('link', { name: 'Old plans' })).toBeInTheDocument()
   })
@@ -341,7 +340,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     await user.click(within(screen.getByRole('banner')).getByRole('button', { name: /Archive/ }))
     await screen.findByRole('heading', { name: 'Nice to meet you, stranger.' })
     expect(window.location.pathname).toBe('/')
-    expect(existsSync(path.join(dataDir, 'conversations', 'archived', `${conversation.id}.json`))).toBe(true)
+    expect(await getStore().get(conversation.id)).toMatchObject({ archived: true })
   })
 
   it('stops a streaming reply and keeps the partial answer', async () => {
@@ -355,8 +354,8 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     expect(screen.getByText('Part one of the answer')).toBeInTheDocument()
 
     await waitFor(async () => {
-      const [summary] = await getStore(dataDir).list()
-      const saved = await getStore(dataDir).get(summary.id)
+      const [summary] = await getStore().list()
+      const saved = await getStore().get(summary.id)
       expect(saved?.messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Part one of the answer' })
     })
   })
@@ -564,7 +563,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
       await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toBeDisabled())
       await schedulePrompt(user, 'Top news')
       expect(await screen.findByText(/Scheduled “Top news”/)).toBeInTheDocument()
-      expect(await getStore(dataDir).get(old.id)).toMatchObject({ archived: true })
+      expect(await getStore().get(old.id)).toMatchObject({ archived: true })
     })
 
     it('leaves the normal send behaviour alone when Repeat is switched back off', async () => {
@@ -637,7 +636,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
       await user.click(within(sidebar()).getByRole('button', { name: 'Delete schedule “Top news”' }))
       await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled())
       expect(await getScheduleStore(dataDir).get(schedule.id)).toBeNull()
-      expect(await getStore(dataDir).get(report.id)).not.toBeNull()
+      expect(await getStore().get(report.id)).not.toBeNull()
     })
 
     it('says so when a run fails and keeps showing the last report', async () => {

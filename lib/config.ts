@@ -19,6 +19,9 @@ export interface AppConfig {
   /** The local backend's default model; when unset, the first model the local server lists. */
   localModel?: string
   contextWindow: number
+  /** PostgreSQL connection string for the conversation store. */
+  databaseUrl?: string
+  /** Where schedules are stored. */
   dataDir: string
   systemPrompt: string
 }
@@ -77,6 +80,7 @@ export function getConfig(env: Env = process.env): AppConfig {
     defaultModel: normalizeModelName(clean(env.OLLAMA_MODEL) ?? FALLBACK_MODEL, host),
     localModel: localModel && normalizeModelName(localModel, localHost),
     contextWindow: positiveInt(env.OLLAMA_CONTEXT_WINDOW, FALLBACK_CONTEXT_WINDOW),
+    databaseUrl: clean(env.DATABASE_URL),
     // Resolved at runtime; not a build-time file dependency.
     dataDir: path.resolve(/*turbopackIgnore: true*/ process.cwd(), clean(env.DATA_DIR) ?? 'data'),
     systemPrompt: clean(env.SYSTEM_PROMPT) ?? DEFAULT_SYSTEM_PROMPT,
