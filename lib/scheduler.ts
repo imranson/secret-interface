@@ -46,7 +46,7 @@ async function generateReport(schedule: Schedule, signal: AbortSignal): Promise<
  * owns more than one. An archived conversation counts as gone: archiving keeps a report, so it is left as it is.
  */
 async function publishReport(schedule: Schedule, messages: ChatMessage[], model: string): Promise<string> {
-  const store = getStore()
+  const store = getStore(schedule.userId)
   const existing = schedule.conversationId ? await store.get(schedule.conversationId) : null
   const conversation = existing && !existing.archived ? existing : store.create({ title: schedule.title })
   conversation.messages = messages
@@ -98,8 +98,8 @@ export function startRun(schedule: Schedule): Promise<void> | null {
 const isDue = (s: Schedule, now: Date) => s.enabled && s.nextRunAt !== null && new Date(s.nextRunAt) <= now
 
 /**
- * Starts every due schedule and resolves once those runs end. A schedule that can't start stays due, so the next tick
- * retries it; that is how a refresh waits for a reply in progress.
+ * Starts every due schedule, whoever it belongs to, and resolves once those runs end. A schedule that can't start stays
+ * due, so the next tick retries it; that is how a refresh waits for a reply in progress.
  */
 export async function tickSchedules(now: Date = new Date()): Promise<void> {
   const due = (await getScheduleStore().list()).filter((s) => isDue(s, now))
@@ -110,12 +110,12 @@ export async function tickSchedules(now: Date = new Date()): Promise<void> {
 const isUpToDate = (s: Schedule, now: Date) => s.lastRunAt !== null && s.lastError === null && !isDue(s, now)
 
 /**
- * Called whenever the app opens in a tab, so every schedule shows as completed or running: anything not up to date
- * starts now, whether it never ran, came due while the server was down, or failed. Paused schedules are left alone.
- * Returns the ids started; they run on in the background.
+ * Called whenever the app opens in a tab, so every one of the user's schedules shows as completed or running: anything
+ * not up to date starts now, whether it never ran, came due while the server was down, or failed. Paused schedules are
+ * left alone. Returns the ids started; they run on in the background.
  */
-export async function catchUpSchedules(now: Date = new Date()): Promise<string[]> {
-  const stale = (await getScheduleStore().list()).filter((s) => s.enabled && !isUpToDate(s, now))
+export async function catchUpSchedules(userId: string, now: Date = new Date()): Promise<string[]> {
+  const stale = (await getScheduleStore().list(userId)).filter((s) => s.enabled && !isUpToDate(s, now))
   return stale.filter((s) => startRun(s) !== null).map((s) => s.id)
 }
 

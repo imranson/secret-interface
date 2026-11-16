@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearModelCaches } from '@/lib/models'
+import { signIn } from '../helpers/auth'
 import { createFakeOllama, type FakeOllama } from '../helpers/fake-ollama'
 
 const holder = vi.hoisted(() => ({ fake: undefined as FakeOllama | undefined }))
@@ -8,7 +9,13 @@ vi.mock('@/lib/ollama', () => ({ getOllamaClient: () => holder.fake!.client }))
 const { GET: models } = await import('@/app/api/models/route')
 const { GET: modelInfo } = await import('@/app/api/model-info/route')
 
-beforeEach(() => {
+let cookie: string
+
+/** A GET from the signed-in browser. */
+const get = (url: string) => new Request(url, { headers: { cookie } })
+
+beforeEach(async () => {
+  ;({ cookie } = await signIn())
   holder.fake = createFakeOllama()
   clearModelCaches()
   vi.stubEnv('OLLAMA_HOST', '')
@@ -18,7 +25,7 @@ beforeEach(() => {
 
 describe('GET /api/models', () => {
   it('returns the models available to the API key', async () => {
-    const body = await (await models(new Request('http://localhost/api/models'))).json()
+    const body = await (await models(get('http://localhost/api/models'))).json()
     expect(body).toEqual({
       backend: 'cloud',
       host: 'https://ollama.com',
@@ -30,7 +37,7 @@ describe('GET /api/models', () => {
   it('lists the local server’s models', async () => {
     vi.stubEnv('OLLAMA_LOCAL_HOST', '')
     vi.stubEnv('OLLAMA_LOCAL_MODEL', '')
-    const body = await (await models(new Request('http://localhost/api/models?backend=local'))).json()
+    const body = await (await models(get('http://localhost/api/models?backend=local'))).json()
     expect(body).toEqual({
       backend: 'local',
       host: 'http://127.0.0.1:11434',
@@ -40,20 +47,28 @@ describe('GET /api/models', () => {
   })
 
   it('rejects an unknown backend', async () => {
-    const response = await models(new Request('http://localhost/api/models?backend=mars'))
+    const response = await models(get('http://localhost/api/models?backend=mars'))
     expect(response.status).toBe(400)
+  })
+})
+
+describe('sign-in', () => {
+  it('is needed for both', async () => {
+    expect((await models(new Request('http://localhost/api/models'))).status).toBe(401)
+    expect((await modelInfo(new Request('http://localhost/api/model-info'))).status).toBe(401)
+    expect(holder.fake!.client.list).not.toHaveBeenCalled()
   })
 })
 
 describe('GET /api/model-info', () => {
   it("reports the model's context window", async () => {
-    const response = await modelInfo(new Request('http://localhost/api/model-info?model=gpt-oss%3A120b'))
+    const response = await modelInfo(get('http://localhost/api/model-info?model=gpt-oss%3A120b'))
     expect(await response.json()).toEqual({ model: 'gpt-oss:120b', contextLength: 131072, source: 'model' })
   })
 
   it('falls back to the configured window', async () => {
     holder.fake!.client.show.mockResolvedValueOnce({ model_info: {} })
-    const response = await modelInfo(new Request('http://localhost/api/model-info'))
+    const response = await modelInfo(get('http://localhost/api/model-info'))
     expect(await response.json()).toEqual({ model: 'gpt-oss:120b', contextLength: 32000, source: 'config' })
   })
 })

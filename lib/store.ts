@@ -1,13 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { Pool } from 'pg'
-import { getConfig } from './config'
+import { getDb, type Database } from './db'
 import { deriveTitle } from './title'
 import type { ChatMessage, Conversation, ConversationSummary, Role } from './types'
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
-
-export const DATABASE_URL_MISSING =
-  'DATABASE_URL is not set. Point it at a PostgreSQL database (in .env.local, or your host’s environment settings) and restart the server.'
 
 export function isValidConversationId(id: unknown): id is string {
   return typeof id === 'string' && ID_PATTERN.test(id)
@@ -89,30 +85,9 @@ export function summarize(conversation: Conversation): ConversationSummary {
   return { ...rest, message_count: messages.filter((m) => m.role === 'user' || m.role === 'assistant').length }
 }
 
-/** What the store needs from a database client: pg's Pool in the app, PGlite in tests. */
-export interface Queryable {
-  query(text: string, params?: unknown[]): Promise<{ rows: unknown[] }>
-}
-
-// Messages are always read and written as a whole (edits and scheduled reports replace them), so they live in one
-// jsonb column. message_count is kept beside them so listing never has to read the messages.
-const SCHEMA = [
-  `CREATE TABLE IF NOT EXISTS conversations (
-    id            text PRIMARY KEY,
-    title         text NOT NULL,
-    model         text,
-    archived      boolean NOT NULL DEFAULT false,
-    created_at    timestamptz NOT NULL,
-    updated_at    timestamptz NOT NULL,
-    message_count integer NOT NULL DEFAULT 0,
-    messages      jsonb NOT NULL DEFAULT '[]'::jsonb
-  )`,
-  'CREATE INDEX IF NOT EXISTS conversations_list_idx ON conversations (archived, updated_at DESC)',
-]
-
 const SUMMARY_COLUMNS = 'id, title, model, archived, created_at, updated_at, message_count'
-const INSERT = `INSERT INTO conversations (id, title, model, archived, created_at, updated_at, message_count, messages)
-  VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`
+const INSERT = `INSERT INTO conversations (id, title, model, archived, created_at, updated_at, message_count, messages, user_id)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)`
 
 interface SummaryRow {
   id: string
@@ -145,7 +120,7 @@ function toSummary(row: SummaryRow): ConversationSummary {
 /** Postgres rejects NUL characters in text and lone surrogates in jsonb; either can turn up in a fetched page. */
 const clean = (text: string) => text.toWellFormed().replaceAll('\0', '')
 
-function insertParams(conversation: Conversation): unknown[] {
+function insertParams(conversation: Conversation, userId: string): unknown[] {
   if (!isValidConversationId(conversation.id)) throw new Error(`Invalid conversation id: ${conversation.id}`)
   return [
     conversation.id,
@@ -156,28 +131,16 @@ function insertParams(conversation: Conversation): unknown[] {
     conversation.updated_at,
     summarize(conversation).message_count,
     JSON.stringify(conversation.messages, (_key, value) => (typeof value === 'string' ? clean(value) : value)),
+    userId,
   ]
 }
 
-/** Conversation store backed by a PostgreSQL `conversations` table, which it creates on first use. */
+/** One user's conversations, in the `conversations` table. Other users' conversations are invisible to it. */
 export class ConversationStore {
-  private ready: Promise<void> | null = null
-
-  constructor(private readonly db: Queryable) {}
-
-  private async query<R>(text: string, params?: unknown[]): Promise<R[]> {
-    // A failed setup is retried on the next query rather than remembered.
-    this.ready ??= this.migrate().catch((error) => {
-      this.ready = null
-      throw error
-    })
-    await this.ready
-    return (await this.db.query(text, params)).rows as R[]
-  }
-
-  private async migrate(): Promise<void> {
-    for (const statement of SCHEMA) await this.db.query(statement)
-  }
+  constructor(
+    private readonly db: Database,
+    readonly userId: string,
+  ) {}
 
   create(init: { model?: string; title?: string } = {}): Conversation {
     const now = new Date().toISOString()
@@ -193,9 +156,9 @@ export class ConversationStore {
   }
 
   async list(archived = false): Promise<ConversationSummary[]> {
-    const rows = await this.query<SummaryRow>(
-      `SELECT ${SUMMARY_COLUMNS} FROM conversations WHERE archived = $1 ORDER BY updated_at DESC`,
-      [archived],
+    const rows = await this.db.query<SummaryRow>(
+      `SELECT ${SUMMARY_COLUMNS} FROM conversations WHERE user_id = $1 AND archived = $2 ORDER BY updated_at DESC`,
+      [this.userId, archived],
     )
     return rows.map(toSummary)
   }
@@ -203,9 +166,9 @@ export class ConversationStore {
   /** Finds a conversation whether or not it is archived. */
   async get(id: string): Promise<Conversation | null> {
     if (!isValidConversationId(id)) return null
-    const [row] = await this.query<ConversationRow>(
-      'SELECT id, title, model, archived, created_at, updated_at, messages FROM conversations WHERE id = $1',
-      [id],
+    const [row] = await this.db.query<ConversationRow>(
+      'SELECT id, title, model, archived, created_at, updated_at, messages FROM conversations WHERE id = $1 AND user_id = $2',
+      [id, this.userId],
     )
     if (!row) return null
     const created = iso(row.created_at)
@@ -220,10 +183,10 @@ export class ConversationStore {
   /**
    * Inserts or replaces the conversation. Only setArchived changes `archived`, so a reply that finishes after its
    * conversation was archived lands in the archived conversation instead of restoring it; `conversation.archived` is
-   * updated to match.
+   * updated to match. Throws if the id belongs to another user's conversation.
    */
   async save(conversation: Conversation): Promise<void> {
-    const [row] = await this.query<{ archived: boolean }>(
+    const [row] = await this.db.query<{ archived: boolean }>(
       `${INSERT}
       ON CONFLICT (id) DO UPDATE SET
         title = EXCLUDED.title,
@@ -231,51 +194,34 @@ export class ConversationStore {
         updated_at = EXCLUDED.updated_at,
         message_count = EXCLUDED.message_count,
         messages = EXCLUDED.messages
+      WHERE conversations.user_id = EXCLUDED.user_id
       RETURNING archived`,
-      insertParams(conversation),
+      insertParams(conversation, this.userId),
     )
+    if (!row) throw new Error(`Conversation ${conversation.id} belongs to another account`)
     conversation.archived = row.archived
   }
 
   async setArchived(id: string, archived: boolean): Promise<ConversationSummary | null> {
     if (!isValidConversationId(id)) return null
-    const [row] = await this.query<SummaryRow>(
-      `UPDATE conversations SET archived = $2 WHERE id = $1 RETURNING ${SUMMARY_COLUMNS}`,
-      [id, archived],
+    const [row] = await this.db.query<SummaryRow>(
+      `UPDATE conversations SET archived = $3 WHERE id = $1 AND user_id = $2 RETURNING ${SUMMARY_COLUMNS}`,
+      [id, this.userId, archived],
     )
     return row ? toSummary(row) : null
   }
 
   /** Adds a conversation unless one with its id is already stored, which is left untouched. True if it was added. */
   async importConversation(conversation: Conversation): Promise<boolean> {
-    const rows = await this.query(`${INSERT} ON CONFLICT (id) DO NOTHING RETURNING id`, insertParams(conversation))
+    const rows = await this.db.query(
+      `${INSERT} ON CONFLICT (id) DO NOTHING RETURNING id`,
+      insertParams(conversation, this.userId),
+    )
     return rows.length > 0
   }
 }
 
-const STORES = Symbol.for('secret-interface.conversation-stores')
-
-/**
- * The store for DATABASE_URL, with one pool per connection string for the whole process. Route handlers and the
- * scheduler are bundled separately and each get their own copy of this module, so the cache lives on globalThis.
- */
-export function getStore(): ConversationStore {
-  const url = getConfig().databaseUrl
-  if (!url) throw new Error(DATABASE_URL_MISSING)
-  const shared = globalThis as { [STORES]?: Map<string, ConversationStore> }
-  const stores = (shared[STORES] ??= new Map())
-  let store = stores.get(url)
-  if (!store) {
-    const pool = new Pool({ connectionString: url })
-    // An idle connection dropping (e.g. the database restarting) must not crash the server.
-    pool.on('error', (error) => console.error('Postgres pool error:', error.message))
-    store = new ConversationStore(pool)
-    stores.set(url, store)
-  }
-  return store
-}
-
-/** A JSON error for route handlers to return when DATABASE_URL is missing; null when it is set. */
-export function missingDatabaseResponse(): Response | null {
-  return getConfig().databaseUrl ? null : Response.json({ error: DATABASE_URL_MISSING }, { status: 500 })
+/** `userId`'s conversations in the app's database (see getDb). */
+export function getStore(userId: string): ConversationStore {
+  return new ConversationStore(getDb(), userId)
 }

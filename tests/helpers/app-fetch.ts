@@ -1,3 +1,6 @@
+import { POST as loginPOST } from '@/app/api/auth/login/route'
+import { POST as logoutPOST } from '@/app/api/auth/logout/route'
+import { POST as registerPOST } from '@/app/api/auth/register/route'
 import { POST as chatPOST } from '@/app/api/chat/route'
 import { GET as conversationGET, PATCH as conversationPATCH } from '@/app/api/conversations/[id]/route'
 import { GET as conversationsGET } from '@/app/api/conversations/route'
@@ -7,10 +10,14 @@ import { POST as scheduleRunPOST } from '@/app/api/schedules/[id]/run/route'
 import { POST as schedulesCatchUpPOST } from '@/app/api/schedules/catch-up/route'
 import { DELETE as scheduleDELETE, PATCH as schedulePATCH } from '@/app/api/schedules/[id]/route'
 import { GET as schedulesGET, POST as schedulesPOST } from '@/app/api/schedules/route'
+import { testSessionCookie } from './auth'
 
 type Handler = (request: Request, context: { params: Promise<{ id: string }> }) => Promise<Response> | Response
 
 function route(method: string, pathname: string): { handler: Handler; id?: string } | null {
+  if (pathname === '/api/auth/login' && method === 'POST') return { handler: loginPOST }
+  if (pathname === '/api/auth/logout' && method === 'POST') return { handler: logoutPOST }
+  if (pathname === '/api/auth/register' && method === 'POST') return { handler: registerPOST }
   if (pathname === '/api/chat' && method === 'POST') return { handler: chatPOST }
   if (pathname === '/api/conversations' && method === 'GET') return { handler: conversationsGET }
   if (pathname === '/api/models' && method === 'GET') return { handler: modelsGET }
@@ -37,8 +44,9 @@ function route(method: string, pathname: string): { handler: Handler; id?: strin
 
 /**
  * A `fetch` replacement that dispatches browser requests straight to the Next.js route handlers,
- * so UI tests exercise the real server code in-process. Aborting the request errors the response
- * stream and cancels it server-side, like a real disconnect.
+ * so UI tests exercise the real server code in-process. Requests carry the session of the test's
+ * last signIn, like a browser's cookie. Aborting the request errors the response stream and
+ * cancels it server-side, like a real disconnect.
  */
 export async function appFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const url = new URL(String(input), 'http://localhost')
@@ -47,7 +55,10 @@ export async function appFetch(input: RequestInfo | URL, init: RequestInit = {})
   const match = route(method, url.pathname)
   if (!match) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 })
 
-  const response = await match.handler(new Request(url, rest as RequestInit), {
+  const headers = new Headers(rest.headers)
+  const cookie = testSessionCookie()
+  if (cookie && !headers.has('cookie')) headers.set('cookie', cookie)
+  const response = await match.handler(new Request(url, { ...(rest as RequestInit), headers }), {
     params: Promise.resolve({ id: match.id ?? '' }),
   })
   if (!signal || !response.body) return response

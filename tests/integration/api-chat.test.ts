@@ -6,6 +6,7 @@ import { DEFAULT_SYSTEM_PROMPT } from '@/lib/prompts'
 import { getStore } from '@/lib/store'
 import { TOOL_DEFINITIONS } from '@/lib/tool-definitions'
 import type { ChatMessage, StreamEvent } from '@/lib/types'
+import { signIn, type TestSession } from '../helpers/auth'
 import { chunk, createFakeOllama, HttpError, type FakeOllama } from '../helpers/fake-ollama'
 import { makeTempDataDir } from '../helpers/temp-data'
 
@@ -21,6 +22,7 @@ const { POST } = await import('@/app/api/chat/route')
 
 let dataDir: string
 let cleanup: () => Promise<void>
+let session: TestSession
 
 beforeEach(async () => {
   ;({ dir: dataDir, cleanup } = await makeTempDataDir())
@@ -34,6 +36,7 @@ beforeEach(async () => {
   holder.fake = createFakeOllama()
   holder.backends = []
   clearModelCaches()
+  session = await signIn()
 })
 
 afterEach(() => cleanup())
@@ -42,7 +45,7 @@ function post(body: unknown, init: RequestInit = {}) {
   return POST(
     new Request('http://localhost/api/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', cookie: session.cookie },
       body: typeof body === 'string' ? body : JSON.stringify(body),
       ...init,
     }),
@@ -56,7 +59,7 @@ async function events(response: Response): Promise<StreamEvent[]> {
 }
 
 async function readConversation(id: string) {
-  return (await getStore().get(id))!
+  return (await getStore(session.user.id).get(id))!
 }
 
 describe('POST /api/chat', () => {
@@ -173,7 +176,7 @@ describe('POST /api/chat', () => {
     expect((await post({ message: 'hi', editIndex: -1 })).status).toBe(400)
     expect((await post({ message: 'hi', editIndex: 1.5 })).status).toBe(400)
 
-    const store = getStore()
+    const store = getStore(session.user.id)
     const conversation = store.create()
     conversation.messages.push({ role: 'user', content: 'Only one message' })
     await store.save(conversation)
@@ -234,7 +237,7 @@ describe('POST /api/chat', () => {
   })
 
   it('refuses to continue archived conversations', async () => {
-    const store = getStore()
+    const store = getStore(session.user.id)
     const conversation = store.create()
     await store.save(conversation)
     await store.setArchived(conversation.id, true)
@@ -251,12 +254,26 @@ describe('POST /api/chat', () => {
     expect((await response.json()).error).toMatch(/OLLAMA_API_KEY is not set/)
   })
 
-  it('explains a missing DATABASE_URL', async () => {
-    vi.stubEnv('DATABASE_URL', '')
-    const response = await post({ message: 'hi' })
-    expect(response.status).toBe(500)
-    expect((await response.json()).error).toMatch(/DATABASE_URL is not set/)
+  it('needs a signed-in user', async () => {
+    const response = await post({ message: 'hi' }, { headers: { 'Content-Type': 'application/json' } })
+    expect(response.status).toBe(401)
     expect(holder.fake!.client.chat).not.toHaveBeenCalled()
+  })
+
+  it('will not continue another account’s conversation', async () => {
+    const store = getStore(session.user.id)
+    const conversation = store.create()
+    conversation.messages.push({ role: 'user', content: 'Private' })
+    await store.save(conversation)
+
+    const bob = await signIn('bob')
+    const response = await post(
+      { message: 'Show me', conversationId: conversation.id },
+      { headers: { 'Content-Type': 'application/json', cookie: bob.cookie } },
+    )
+    expect(response.status).toBe(404)
+    expect(holder.fake!.client.chat).not.toHaveBeenCalled()
+    expect((await readConversation(conversation.id)).messages).toHaveLength(1)
   })
 
   describe('on the local backend', () => {
@@ -281,7 +298,7 @@ describe('POST /api/chat', () => {
       const response = await post({ message: 'hi', backend: 'local' })
       expect(response.status).toBe(400)
       expect((await response.json()).error).toMatch(/No model available at http:\/\/127\.0\.0\.1:11434/)
-      expect(await getStore().list()).toEqual([])
+      expect(await getStore(session.user.id).list()).toEqual([])
     })
   })
 

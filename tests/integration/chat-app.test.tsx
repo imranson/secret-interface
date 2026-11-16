@@ -8,6 +8,7 @@ import { DEFAULT_SYSTEM_PROMPT } from '@/lib/prompts'
 import { getScheduleStore } from '@/lib/schedule-store'
 import { getStore } from '@/lib/store'
 import { appFetch } from '../helpers/app-fetch'
+import { signIn, type TestSession } from '../helpers/auth'
 import { warmUpDatabase } from '../helpers/database'
 import { chunk, createFakeOllama, HttpError, type FakeOllama } from '../helpers/fake-ollama'
 import { makeTempDataDir } from '../helpers/temp-data'
@@ -24,6 +25,7 @@ vi.mock('next/link', async () => ({ default: (await import('../helpers/next-navi
 
 let dataDir: string
 let cleanup: () => Promise<void>
+let session: TestSession
 
 beforeAll(warmUpDatabase)
 
@@ -44,6 +46,7 @@ beforeEach(async () => {
   window.localStorage.clear()
   document.cookie = 'secret-interface.sidebar=; path=/; max-age=0'
   window.history.replaceState(null, '', '/')
+  session = await signIn()
 })
 
 afterEach(async () => {
@@ -69,7 +72,7 @@ const sidebar = () => screen.getByRole('complementary', { name: 'Conversation hi
 const idle = () => waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeInTheDocument())
 
 async function seedConversation(title: string, archived = false) {
-  const store = getStore()
+  const store = getStore(session.user.id)
   const conversation = store.create({ title })
   conversation.messages.push({ role: 'user', content: title }, { role: 'assistant', content: `An answer about *${title}*.` })
   await store.save(conversation)
@@ -78,6 +81,16 @@ async function seedConversation(title: string, archived = false) {
 }
 
 describe('ChatApp (UI → API routes → store → Ollama)', () => {
+  it('shows the signed-in user and signs out', async () => {
+    // jsdom can't load /login, and says so on the console.
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const user = renderApp({ username: 'ada' })
+    await idle()
+    expect(within(sidebar()).getByTitle('Signed in as ada')).toBeInTheDocument()
+    await user.click(within(sidebar()).getByRole('button', { name: 'Sign out' }))
+    await waitFor(async () => expect((await appFetch('/api/conversations')).status).toBe(401))
+  })
+
   it('chats with streaming Markdown rendered in the serif prose style and saves the conversation', async () => {
     holder.fake!.push({
       chunks: [
@@ -104,8 +117,8 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     expect(within(sidebar()).getByRole('link', { name: 'Show me a table' })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('heading', { level: 1, name: 'Show me a table' })).toBeInTheDocument()
 
-    const [summary] = await getStore().list()
-    const saved = (await getStore().get(summary.id))!
+    const [summary] = await getStore(session.user.id).list()
+    const saved = (await getStore(session.user.id).get(summary.id))!
     expect(saved.messages.map((m) => m.role)).toEqual(['user', 'assistant'])
     expect(holder.fake!.requests[0]).toMatchObject({ model: 'kimi-k2.6', stream: true })
     expect(holder.fake!.requests[0]).not.toHaveProperty('think')
@@ -202,7 +215,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
       .map((b) => b.textContent)
     expect(titles).toContain('Brand new topic')
     expect(titles).toContain('Earlier chat')
-    expect(await getStore().list()).toHaveLength(2)
+    expect(await getStore(session.user.id).list()).toHaveLength(2)
     // The new conversation did not include the old one's messages.
     expect(holder.fake!.requests[0].messages!.map((m) => m.content)).toEqual([DEFAULT_SYSTEM_PROMPT, 'Brand new topic'])
   })
@@ -216,7 +229,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     await send(user, 'Brand new topic')
     await screen.findByText('Fresh reply.')
     await idle()
-    const created = (await getStore().list()).find((c) => c.title === 'Brand new topic')!
+    const created = (await getStore(session.user.id).list()).find((c) => c.title === 'Brand new topic')!
     // The new conversation takes over the URL of the blank one rather than adding a history entry.
     expect(window.location.pathname).toBe(`/c/${created.id}`)
     expect(window.history.length).toBe(entries)
@@ -253,8 +266,8 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     expect(screen.getByRole('article', { name: 'Assistant message' })).toHaveTextContent('Revised answer.')
     expect(screen.getByRole('article', { name: 'Assistant message' })).not.toHaveTextContent('An answer about')
 
-    const [summary] = await getStore().list()
-    const saved = await getStore().get(summary.id)
+    const [summary] = await getStore(session.user.id).list()
+    const saved = await getStore(session.user.id).get(summary.id)
     expect(saved!.messages).toHaveLength(2)
     expect(saved!.messages[0]).toMatchObject({ role: 'user', content: 'Revised question' })
     expect(saved!.messages[1]).toMatchObject({ role: 'assistant', content: 'Revised answer.' })
@@ -303,7 +316,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     await send(user, 'Something else')
     await screen.findByText('Fresh start.')
     await idle()
-    const [created] = await getStore().list()
+    const [created] = await getStore(session.user.id).list()
     expect(window.location.pathname).toBe(`/c/${created.id}`)
   })
 
@@ -315,7 +328,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     await waitFor(() =>
       expect(within(sidebar()).queryByRole('link', { name: 'Old plans' })).not.toBeInTheDocument(),
     )
-    expect(await getStore().get(conversation.id)).toMatchObject({ archived: true })
+    expect(await getStore(session.user.id).get(conversation.id)).toMatchObject({ archived: true })
 
     await user.click(within(sidebar()).getByRole('button', { name: /^Archived/ }))
     await user.click(await within(sidebar()).findByRole('link', { name: 'Old plans' }))
@@ -326,7 +339,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
 
     await user.click(screen.getByRole('button', { name: 'Restore to continue' }))
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled())
-    expect(await getStore().get(conversation.id)).toMatchObject({ archived: false })
+    expect(await getStore(session.user.id).get(conversation.id)).toMatchObject({ archived: false })
     await user.click(within(sidebar()).getByRole('button', { name: 'Recent' }))
     expect(within(sidebar()).getByRole('link', { name: 'Old plans' })).toBeInTheDocument()
   })
@@ -340,7 +353,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     await user.click(within(screen.getByRole('banner')).getByRole('button', { name: /Archive/ }))
     await screen.findByRole('heading', { name: 'Nice to meet you, stranger.' })
     expect(window.location.pathname).toBe('/')
-    expect(await getStore().get(conversation.id)).toMatchObject({ archived: true })
+    expect(await getStore(session.user.id).get(conversation.id)).toMatchObject({ archived: true })
   })
 
   it('stops a streaming reply and keeps the partial answer', async () => {
@@ -354,8 +367,8 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     expect(screen.getByText('Part one of the answer')).toBeInTheDocument()
 
     await waitFor(async () => {
-      const [summary] = await getStore().list()
-      const saved = await getStore().get(summary.id)
+      const [summary] = await getStore(session.user.id).list()
+      const saved = await getStore(session.user.id).get(summary.id)
       expect(saved?.messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Part one of the answer' })
     })
   })
@@ -492,8 +505,9 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
     }
 
     async function seedSchedule(overrides: Parameters<ReturnType<typeof getScheduleStore>['update']>[1] = () => {}) {
-      const store = getScheduleStore(dataDir)
+      const store = getScheduleStore()
       const schedule = store.create({
+        userId: session.user.id,
         prompt: 'Top news',
         rule: { kind: 'daily', time: '09:00', timezone: 'UTC' },
       })
@@ -520,7 +534,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
       expect(list).toHaveTextContent('Top news, briefly')
       expect(list).toHaveTextContent('Scheduled · Every day at 09:00')
 
-      const [saved] = await getScheduleStore(dataDir).list()
+      const [saved] = await getScheduleStore().list(session.user.id)
       expect(saved).toMatchObject({ prompt: 'Top news, briefly', model: 'kimi-k2.6', conversationId: null })
     })
 
@@ -552,7 +566,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
       await user.click(screen.getByRole('button', { name: 'Schedule' }))
 
       await waitFor(async () => {
-        expect((await getScheduleStore(dataDir).list())[0]?.rule).toMatchObject({ kind: 'weekly', weekdays: [1, 3] })
+        expect((await getScheduleStore().list(session.user.id))[0]?.rule).toMatchObject({ kind: 'weekly', weekdays: [1, 3] })
       })
     })
 
@@ -563,7 +577,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
       await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toBeDisabled())
       await schedulePrompt(user, 'Top news')
       expect(await screen.findByText(/Scheduled “Top news”/)).toBeInTheDocument()
-      expect(await getStore().get(old.id)).toMatchObject({ archived: true })
+      expect(await getStore(session.user.id).get(old.id)).toMatchObject({ archived: true })
     })
 
     it('leaves the normal send behaviour alone when Repeat is switched back off', async () => {
@@ -573,7 +587,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
       await user.click(screen.getByRole('button', { name: 'Repeat' }))
       await send(user, 'Just once')
       expect(await screen.findByText('Sent normally.')).toBeInTheDocument()
-      expect(await getScheduleStore(dataDir).list()).toEqual([])
+      expect(await getScheduleStore().list(session.user.id)).toEqual([])
     })
 
     it('shows a run through to unread, then completed once it is opened', async () => {
@@ -593,7 +607,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
       await waitFor(() => expect(within(sidebar()).getByRole('button', { name: 'Scheduled' })).toBeInTheDocument())
       await user.click(within(sidebar()).getByRole('button', { name: 'Scheduled' }))
       expect(within(sidebar()).getByRole('list', { name: 'Schedules' })).toHaveTextContent('Completed')
-      expect((await getScheduleStore(dataDir).list())[0].unread).toBe(false)
+      expect((await getScheduleStore().list(session.user.id))[0].unread).toBe(false)
     })
 
     it('swaps in the new report when the open conversation refreshes, keeping the unsent draft', async () => {
@@ -616,7 +630,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
       expect(screen.queryByText(/An answer about/)).not.toBeInTheDocument()
       expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('unsent')
       // Read on arrival, since it is already on screen.
-      await waitFor(async () => expect((await getScheduleStore(dataDir).list())[0].unread).toBe(false))
+      await waitFor(async () => expect((await getScheduleStore().list(session.user.id))[0].unread).toBe(false))
     })
 
     it('blocks replies while the open conversation refreshes', async () => {
@@ -635,8 +649,8 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
 
       await user.click(within(sidebar()).getByRole('button', { name: 'Delete schedule “Top news”' }))
       await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled())
-      expect(await getScheduleStore(dataDir).get(schedule.id)).toBeNull()
-      expect(await getStore().get(report.id)).not.toBeNull()
+      expect(await getScheduleStore().get(schedule.id)).toBeNull()
+      expect(await getStore(session.user.id).get(report.id)).not.toBeNull()
     })
 
     it('says so when a run fails and keeps showing the last report', async () => {
@@ -670,7 +684,7 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
 
       expect(await screen.findByText('Fresh report', {}, { timeout: 5000 })).toBeInTheDocument()
       expect(screen.queryByText(/The last run failed/)).not.toBeInTheDocument()
-      expect((await getScheduleStore(dataDir).list())[0].lastError).toBeNull()
+      expect((await getScheduleStore().list(session.user.id))[0].lastError).toBeNull()
       expect(holder.fake!.client.chat).toHaveBeenCalledTimes(1)
     })
   })

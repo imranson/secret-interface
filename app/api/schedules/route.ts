@@ -1,3 +1,4 @@
+import { requestUser, unauthorized } from '@/lib/auth'
 import { parseRule } from '@/lib/schedule'
 import { getScheduleStore, toScheduleView } from '@/lib/schedule-store'
 import { isBackend, THINK_OPTIONS, type CreateScheduleBody, type ScheduleRule } from '@/lib/types'
@@ -5,12 +6,16 @@ import { isBackend, THINK_OPTIONS, type CreateScheduleBody, type ScheduleRule } 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
-  const schedules = await getScheduleStore().list()
+export async function GET(request: Request) {
+  const user = await requestUser(request)
+  if (!user) return unauthorized()
+  const schedules = await getScheduleStore().list(user.id)
   return Response.json({ schedules: schedules.map(toScheduleView) })
 }
 
 export async function POST(request: Request) {
+  const user = await requestUser(request)
+  if (!user) return unauthorized()
   let body: Partial<CreateScheduleBody>
   try {
     body = await request.json()
@@ -33,7 +38,7 @@ export async function POST(request: Request) {
   }
   const store = getScheduleStore()
   const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : undefined
-  const schedule = store.create({ prompt, rule, model, backend: body.backend, think: body.think })
+  const schedule = store.create({ userId: user.id, prompt, rule, model, backend: body.backend, think: body.think })
   await store.save(schedule)
   return Response.json({ schedule: toScheduleView(schedule) }, { status: 201 })
 }

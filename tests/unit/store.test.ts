@@ -1,21 +1,20 @@
 import { PGlite } from '@electric-sql/pglite'
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { Database } from '@/lib/db'
 import {
   ConversationStore,
-  DATABASE_URL_MISSING,
   getStore,
   isValidConversationId,
-  missingDatabaseResponse,
   newConversationId,
   normalizeConversation,
   summarize,
-  type Queryable,
 } from '@/lib/store'
 import type { Conversation } from '@/lib/types'
 
 // A PGlite of this file's own, used directly, so tests can look at the table.
 let db: PGlite
 let store: ConversationStore
+let bobs: ConversationStore
 
 beforeAll(async () => {
   db = new PGlite()
@@ -25,8 +24,11 @@ beforeAll(async () => {
 afterAll(() => db.close())
 
 beforeEach(async () => {
-  await db.exec('DROP TABLE IF EXISTS conversations')
-  store = new ConversationStore(db)
+  await db.exec('DROP TABLE IF EXISTS schedules, conversations, sessions, users')
+  const database = new Database(db)
+  await database.query(`INSERT INTO users (id, username, password_hash) VALUES ('ada', 'ada', 'x'), ('bob', 'bob', 'x')`)
+  store = new ConversationStore(database, 'ada')
+  bobs = new ConversationStore(database, 'bob')
 })
 
 async function seed(title: string, updated_at: string, init: Partial<Conversation> = {}): Promise<Conversation> {
@@ -152,20 +154,24 @@ describe('ConversationStore', () => {
     expect(await store.get(conversation.id)).toEqual(conversation)
   })
 
-  it('retries setting up the table after a failure', async () => {
-    let fail = true
-    const flaky: Queryable = {
-      query: (text, params) => {
-        if (fail) {
-          fail = false
-          return Promise.reject(new Error('connection refused'))
-        }
-        return db.query(text, params)
-      },
-    }
-    const retrying = new ConversationStore(flaky)
-    await expect(retrying.list()).rejects.toThrow('connection refused')
-    expect(await retrying.list()).toEqual([])
+  it('keeps each account’s conversations to itself', async () => {
+    const mine = await seed('Mine', '2026-09-01T00:00:00.000Z')
+
+    expect(await bobs.list()).toEqual([])
+    expect(await bobs.get(mine.id)).toBeNull()
+    expect(await bobs.setArchived(mine.id, true)).toBeNull()
+    await expect(bobs.save({ ...mine, title: 'Taken over' })).rejects.toThrow('belongs to another account')
+    expect(await bobs.importConversation({ ...mine, title: 'Taken over' })).toBe(false)
+
+    expect(await store.get(mine.id)).toEqual(mine)
+    expect((await store.list()).map((c) => c.title)).toEqual(['Mine'])
+  })
+
+  it('leaves conversations from before accounts existed to whoever claims them', async () => {
+    await seed('From v2', '2026-09-01T00:00:00.000Z')
+    await db.query('UPDATE conversations SET user_id = NULL')
+    expect(await store.list()).toEqual([])
+    expect(await bobs.list()).toEqual([])
   })
 })
 
@@ -229,20 +235,9 @@ describe('summarize', () => {
 })
 
 describe('getStore', () => {
-  it('uses DATABASE_URL, one store per connection string', () => {
-    const first = getStore()
-    expect(first).toBeInstanceOf(ConversationStore)
-    expect(getStore()).toBe(first)
-    vi.stubEnv('DATABASE_URL', 'postgres://user:pass@127.0.0.1:1/other')
-    expect(getStore()).not.toBe(first)
-  })
-
-  it('explains a missing DATABASE_URL', async () => {
-    expect(missingDatabaseResponse()).toBeNull()
-    vi.stubEnv('DATABASE_URL', '')
-    expect(() => getStore()).toThrow(DATABASE_URL_MISSING)
-    const response = missingDatabaseResponse()!
-    expect(response.status).toBe(500)
-    expect(await response.json()).toEqual({ error: DATABASE_URL_MISSING })
+  it('gives the account’s store', () => {
+    const ada = getStore('ada')
+    expect(ada).toBeInstanceOf(ConversationStore)
+    expect(ada.userId).toBe('ada')
   })
 })

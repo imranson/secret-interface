@@ -1,7 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { promises as fs } from 'node:fs'
-import path from 'node:path'
-import { getConfig } from './config'
+import { getDb, type Database } from './db'
 import { isRunning } from './run-state'
 import { nextRunAt, parseRule, scheduleStatus } from './schedule'
 import { deriveTitle } from './title'
@@ -22,13 +20,17 @@ export function isValidScheduleId(id: unknown): id is string {
 }
 
 export function toScheduleView(schedule: Schedule): ScheduleView {
-  return { ...schedule, status: scheduleStatus(schedule, isRunning(schedule.id)) }
+  const { userId: _userId, ...rest } = schedule
+  return { ...rest, status: scheduleStatus(schedule, isRunning(schedule.id)) }
 }
 
 const optionalString = (value: unknown): string | null => (typeof value === 'string' && value ? value : null)
 
-/** Rebuilds a schedule from its file, or returns null if the file isn't one. */
-function normalize(raw: unknown, id: string): Schedule | null {
+/**
+ * Rebuilds a schedule from stored data (a database row's `data`, or a file older versions wrote), or returns null if
+ * it isn't one.
+ */
+export function normalizeSchedule(raw: unknown, id: string, userId: string): Schedule | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
   const obj = raw as Record<string, unknown>
   if (typeof obj.prompt !== 'string' || !obj.prompt) return null
@@ -40,6 +42,7 @@ function normalize(raw: unknown, id: string): Schedule | null {
   }
   return {
     id,
+    userId,
     title: optionalString(obj.title) ?? deriveTitle(obj.prompt),
     prompt: obj.prompt,
     rule,
@@ -63,26 +66,41 @@ function compare(a: Schedule, b: Schedule): number {
   return when(a) - when(b) || b.created_at.localeCompare(a.created_at)
 }
 
+interface ScheduleRow {
+  id: string
+  user_id: string
+  data: unknown
+}
+
+function fromRow(row: ScheduleRow): Schedule | null {
+  const schedule = normalizeSchedule(row.data, row.id, row.user_id)
+  if (!schedule) console.warn(`Skipping unreadable schedule ${row.id}`)
+  return schedule
+}
+
+function rowParams(schedule: Schedule): unknown[] {
+  if (!isValidScheduleId(schedule.id)) throw new Error(`Invalid schedule id: ${schedule.id}`)
+  const { id, userId, ...data } = schedule
+  return [id, userId, JSON.stringify(data), schedule.created_at]
+}
+
+const INSERT = 'INSERT INTO schedules (id, user_id, data, created_at) VALUES ($1, $2, $3::jsonb, $4)'
+
 // Route handlers and the background scheduler are bundled separately and each get their own copy of this module,
 // so the queue lives on globalThis or it wouldn't serialise anything between them.
 const QUEUE = Symbol.for('secret-interface.schedule-writes')
 const shared = globalThis as { [QUEUE]?: Promise<unknown> }
 
-/** File-based schedule store: `<dataDir>/schedules/<id>.json`. */
+/**
+ * Schedules, in the `schedules` table. Methods that take a `userId` only see that user's schedules; without one they
+ * see everyone's, which is for the background scheduler. Schedules saved before accounts existed are left out until
+ * the first account claims them.
+ */
 export class ScheduleStore {
-  readonly dir: string
-
-  constructor(readonly dataDir: string) {
-    this.dir = path.join(dataDir, 'schedules')
-  }
-
-  private fileFor(id: string): string {
-    if (!isValidScheduleId(id)) throw new Error(`Invalid schedule id: ${id}`)
-    return path.join(this.dir, `${id}.json`)
-  }
+  constructor(private readonly db: Database) {}
 
   create(
-    init: { prompt: string; rule: ScheduleRule; model?: string; backend?: Backend; think?: ThinkOption },
+    init: { userId: string; prompt: string; rule: ScheduleRule; model?: string; backend?: Backend; think?: ThinkOption },
     now = new Date(),
   ): Schedule {
     const iso = now.toISOString()
@@ -101,44 +119,39 @@ export class ScheduleStore {
     }
   }
 
-  async get(id: string): Promise<Schedule | null> {
+  async get(id: string, userId?: string): Promise<Schedule | null> {
     if (!isValidScheduleId(id)) return null
-    let text: string
-    try {
-      text = await fs.readFile(this.fileFor(id), 'utf8')
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-      throw error
-    }
-    return normalize(JSON.parse(text), id)
+    const [row] =
+      userId === undefined
+        ? await this.db.query<ScheduleRow>('SELECT id, user_id, data FROM schedules WHERE id = $1 AND user_id IS NOT NULL', [id])
+        : await this.db.query<ScheduleRow>('SELECT id, user_id, data FROM schedules WHERE id = $1 AND user_id = $2', [id, userId])
+    return row ? fromRow(row) : null
   }
 
-  async list(): Promise<Schedule[]> {
-    let names: string[]
-    try {
-      names = await fs.readdir(this.dir)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
-      throw error
-    }
-    const ids = names.filter((n) => n.endsWith('.json')).map((n) => n.slice(0, -'.json'.length))
-    const schedules = await Promise.all(
-      ids.filter(isValidScheduleId).map((id) =>
-        this.get(id).catch((error) => {
-          console.warn(`Skipping unreadable schedule ${id}:`, (error as Error).message)
-          return null
-        }),
-      ),
-    )
-    return schedules.filter((s): s is Schedule => s !== null).sort(compare)
+  async list(userId?: string): Promise<Schedule[]> {
+    const rows =
+      userId === undefined
+        ? await this.db.query<ScheduleRow>('SELECT id, user_id, data FROM schedules WHERE user_id IS NOT NULL')
+        : await this.db.query<ScheduleRow>('SELECT id, user_id, data FROM schedules WHERE user_id = $1', [userId])
+    return rows
+      .map(fromRow)
+      .filter((s): s is Schedule => s !== null)
+      .sort(compare)
   }
 
+  /** Inserts or replaces the schedule. Throws if its id belongs to another user's schedule. */
   async save(schedule: Schedule): Promise<void> {
-    const file = this.fileFor(schedule.id)
-    await fs.mkdir(this.dir, { recursive: true })
-    const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`
-    await fs.writeFile(tmp, JSON.stringify(schedule, null, 2), 'utf8')
-    await fs.rename(tmp, file)
+    const rows = await this.db.query(
+      `${INSERT} ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data
+      WHERE schedules.user_id = EXCLUDED.user_id RETURNING id`,
+      rowParams(schedule),
+    )
+    if (rows.length === 0) throw new Error(`Schedule ${schedule.id} belongs to another account`)
+  }
+
+  /** Adds a schedule unless one with its id is already stored. True if it was added. */
+  async importSchedule(schedule: Schedule): Promise<boolean> {
+    return (await this.db.query(`${INSERT} ON CONFLICT (id) DO NOTHING RETURNING id`, rowParams(schedule))).length > 0
   }
 
   /** Runs writes to existing schedules one at a time. */
@@ -149,12 +162,12 @@ export class ScheduleStore {
   }
 
   /**
-   * Applies `change` to the latest copy on disk, so marking a report read while a run finishes can't lose either
-   * update. Returns null if the schedule no longer exists.
+   * Applies `change` to the latest stored copy, so marking a report read while a run finishes can't lose either
+   * update. Returns null if the schedule no longer exists (or isn't `userId`'s).
    */
-  update(id: string, change: (schedule: Schedule) => void): Promise<Schedule | null> {
+  update(id: string, change: (schedule: Schedule) => void, userId?: string): Promise<Schedule | null> {
     return this.enqueue(async () => {
-      const schedule = await this.get(id)
+      const schedule = await this.get(id, userId)
       if (!schedule) return null
       change(schedule)
       schedule.updated_at = new Date().toISOString()
@@ -164,27 +177,18 @@ export class ScheduleStore {
   }
 
   /** Queued with updates, or a run finishing as it is cancelled could write a deleted schedule back. */
-  delete(id: string): Promise<boolean> {
+  delete(id: string, userId?: string): Promise<boolean> {
     if (!isValidScheduleId(id)) return Promise.resolve(false)
     return this.enqueue(async () => {
-      try {
-        await fs.unlink(this.fileFor(id))
-        return true
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
-        throw error
-      }
+      const rows =
+        userId === undefined
+          ? await this.db.query('DELETE FROM schedules WHERE id = $1 RETURNING id', [id])
+          : await this.db.query('DELETE FROM schedules WHERE id = $1 AND user_id = $2 RETURNING id', [id, userId])
+      return rows.length > 0
     })
   }
 }
 
-const stores = new Map<string, ScheduleStore>()
-
-export function getScheduleStore(dataDir: string = getConfig().dataDir): ScheduleStore {
-  let store = stores.get(dataDir)
-  if (!store) {
-    store = new ScheduleStore(dataDir)
-    stores.set(dataDir, store)
-  }
-  return store
+export function getScheduleStore(): ScheduleStore {
+  return new ScheduleStore(getDb())
 }

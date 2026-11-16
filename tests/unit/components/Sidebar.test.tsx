@@ -202,3 +202,18 @@ describe('<Sidebar>', () => {
     })
   })
 })
+
+describe('Sidebar account footer', () => {
+  it('shows who is signed in and signs out', async () => {
+    const user = userEvent.setup()
+    const props = setup({ username: 'ada', onSignOut: vi.fn() })
+    expect(screen.getByTitle('Signed in as ada')).toHaveTextContent('ada')
+    await user.click(screen.getByRole('button', { name: 'Sign out' }))
+    expect(props.onSignOut).toHaveBeenCalledOnce()
+  })
+
+  it('is left out without a user', () => {
+    setup()
+    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
+  })
+})

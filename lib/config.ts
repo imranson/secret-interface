@@ -19,11 +19,13 @@ export interface AppConfig {
   /** The local backend's default model; when unset, the first model the local server lists. */
   localModel?: string
   contextWindow: number
-  /** PostgreSQL connection string for the conversation store. */
+  /** PostgreSQL connection string. When unset, the app keeps its data in an embedded database under `dataDir`. */
   databaseUrl?: string
-  /** Where schedules are stored. */
+  /** Where the embedded database lives when there is no DATABASE_URL. */
   dataDir: string
   systemPrompt: string
+  /** When set, creating an account requires this code. */
+  registrationCode?: string
 }
 
 type Env = Record<string, string | undefined>
@@ -84,5 +86,6 @@ export function getConfig(env: Env = process.env): AppConfig {
     // Resolved at runtime; not a build-time file dependency.
     dataDir: path.resolve(/*turbopackIgnore: true*/ process.cwd(), clean(env.DATA_DIR) ?? 'data'),
     systemPrompt: clean(env.SYSTEM_PROMPT) ?? DEFAULT_SYSTEM_PROMPT,
+    registrationCode: clean(env.REGISTRATION_CODE),
   }
 }

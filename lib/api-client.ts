@@ -19,7 +19,9 @@ export class ApiError extends Error {
   }
 }
 
-async function readJson<T>(response: Response): Promise<T> {
+async function readJson<T>(response: Response, { toLoginOn401 = true } = {}): Promise<T> {
+  // The session ended (signed out elsewhere, or expired): back to the sign-in page.
+  if (response.status === 401 && toLoginOn401) window.location.assign('/login')
   if (!response.ok) {
     let message = `Request failed (${response.status})`
     try {
@@ -32,6 +34,21 @@ async function readJson<T>(response: Response): Promise<T> {
   }
   return (await response.json()) as T
 }
+
+async function postAuth(path: string, body?: unknown): Promise<void> {
+  const res = await fetch(`/api/auth/${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  })
+  await readJson(res, { toLoginOn401: false })
+}
+
+export const signIn = (body: { username: string; password: string }) => postAuth('login', body)
+
+export const register = (body: { username: string; password: string; code?: string }) => postAuth('register', body)
+
+export const signOut = () => postAuth('logout')
 
 export async function listConversations(archived = false): Promise<ConversationSummary[]> {
   const res = await fetch(`/api/conversations${archived ? '?archived=1' : ''}`, { cache: 'no-store' })

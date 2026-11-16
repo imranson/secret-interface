@@ -4,6 +4,7 @@ import type { Schedule, ScheduleRule, ScheduleView } from '@/lib/types'
 
 const schedule = (overrides: Partial<Schedule> = {}): Schedule => ({
   id: 'a',
+  userId: 'ada',
   title: 'News',
   prompt: 'News',
   rule: { kind: 'daily', time: '09:00', timezone: 'UTC' },

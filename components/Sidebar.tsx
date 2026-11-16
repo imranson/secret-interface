@@ -32,6 +32,9 @@ export interface SidebarProps {
   onRunSchedule: (id: string) => void
   onSetScheduleEnabled: (id: string, enabled: boolean) => void
   onDeleteSchedule: (id: string) => void
+  /** The signed-in user; the account footer shows only when it is set. */
+  username?: string
+  onSignOut?: () => void
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -143,6 +146,17 @@ export function Sidebar(props: SidebarProps) {
             ))
           )}
         </nav>
+      )}
+
+      {props.username && (
+        <div className="sidebar-foot">
+          <span className="account-name" title={`Signed in as ${props.username}`}>
+            {props.username}
+          </span>
+          <button type="button" className="ghost-button" onClick={props.onSignOut}>
+            Sign out
+          </button>
+        </div>
       )}
     </aside>
   )

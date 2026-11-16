@@ -8,6 +8,7 @@ import {
   listConversations,
   listModels,
   setArchived as setArchivedApi,
+  signOut as signOutApi,
   streamChat,
 } from '@/lib/api-client'
 import { applyStreamEvent } from '@/lib/chat-reducer'
@@ -107,6 +108,8 @@ interface CurrentConversation {
 const NEW_CONVERSATION: CurrentConversation = { id: null, title: 'New conversation', archived: false, messages: [] }
 
 export interface ChatAppProps {
+  /** The signed-in user, shown in the sidebar with a way to sign out. */
+  username?: string
   defaultModel: string
   defaultContextWindow: number
   systemPrompt: string
@@ -115,6 +118,7 @@ export interface ChatAppProps {
 }
 
 export function ChatApp({
+  username,
   defaultModel,
   defaultContextWindow,
   systemPrompt,
@@ -498,6 +502,11 @@ export function ChatApp({
 
   const reportScheduleError = (action: string) => (e: unknown) => setError(`Could not ${action}: ${messageOf(e)}`)
 
+  const signOut = () =>
+    signOutApi()
+      .then(() => window.location.assign('/login'))
+      .catch((e) => setError(`Could not sign out: ${messageOf(e)}`))
+
   const empty = (
     <div className="empty">
       <h1 className="empty-title">Nice to meet you, stranger.</h1>
@@ -527,6 +536,8 @@ export function ChatApp({
           scheduling.setEnabled(id, enabled).catch(reportScheduleError('update the schedule'))
         }
         onDeleteSchedule={(id) => scheduling.remove(id).catch(reportScheduleError('delete the schedule'))}
+        username={username}
+        onSignOut={signOut}
       />
       {sidebarOpen && <div className="scrim" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
 

@@ -4,8 +4,9 @@ import { describeError } from '@/lib/errors'
 import { defaultModelFor } from '@/lib/models'
 import { encodeNdjson } from '@/lib/ndjson'
 import { getOllamaClient } from '@/lib/ollama'
+import { requestUser, unauthorized } from '@/lib/auth'
 import { beginChat, endChat } from '@/lib/run-state'
-import { getStore, isValidConversationId, missingDatabaseResponse, summarize } from '@/lib/store'
+import { getStore, isValidConversationId, summarize } from '@/lib/store'
 import { deriveTitle } from '@/lib/title'
 import {
   isBackend,
@@ -25,6 +26,8 @@ function jsonError(error: string, status: number) {
 }
 
 export async function POST(request: Request) {
+  const user = await requestUser(request)
+  if (!user) return unauthorized()
   let body: Partial<ChatRequestBody>
   try {
     body = await request.json()
@@ -44,9 +47,6 @@ export async function POST(request: Request) {
   if (isCloudHost(hostFor(config, body.backend)) && !config.apiKey) {
     return jsonError('OLLAMA_API_KEY is not set. Add it to .env.local and restart the server.', 500)
   }
-  const missing = missingDatabaseResponse()
-  if (missing) return missing
-
   // Claimed before the conversation is read, so a schedule can't refresh it underneath this reply.
   const id = body.conversationId || null
   if (id) {
@@ -59,7 +59,7 @@ export async function POST(request: Request) {
     released = true
   }
   try {
-    const response = await reply(request, body, text, release)
+    const response = await reply(request, user.id, body, text, release)
     if (!response.ok) release()
     return response
   } catch (error) {
@@ -69,9 +69,15 @@ export async function POST(request: Request) {
 }
 
 /** Streams the reply, calling `release` once the conversation has been saved for the last time. */
-async function reply(request: Request, body: Partial<ChatRequestBody>, text: string, release: () => void) {
+async function reply(
+  request: Request,
+  userId: string,
+  body: Partial<ChatRequestBody>,
+  text: string,
+  release: () => void,
+) {
   const config = getConfig()
-  const store = getStore()
+  const store = getStore(userId)
   let conversation: Conversation
   if (body.conversationId) {
     const existing = await store.get(body.conversationId)

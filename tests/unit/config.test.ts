@@ -45,6 +45,8 @@ describe('getConfig', () => {
     expect(config.contextWindow).toBe(FALLBACK_CONTEXT_WINDOW)
     expect(config.dataDir).toBe(path.resolve('data'))
     expect(config.systemPrompt).toBe(DEFAULT_SYSTEM_PROMPT)
+    expect(config.databaseUrl).toBeUndefined()
+    expect(config.registrationCode).toBeUndefined()
   })
 
   it('reads and cleans environment values', () => {
@@ -55,6 +57,8 @@ describe('getConfig', () => {
       OLLAMA_CONTEXT_WINDOW: '256000',
       DATA_DIR: '/tmp/somewhere',
       SYSTEM_PROMPT: 'Be brief.',
+      DATABASE_URL: ' postgres://db/app ',
+      REGISTRATION_CODE: ' friends ',
     })
     expect(config).toMatchObject({
       apiKey: 'key',
@@ -63,6 +67,8 @@ describe('getConfig', () => {
       contextWindow: 256000,
       dataDir: '/tmp/somewhere',
       systemPrompt: 'Be brief.',
+      databaseUrl: 'postgres://db/app',
+      registrationCode: 'friends',
     })
   })
 

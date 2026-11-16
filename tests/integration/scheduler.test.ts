@@ -6,6 +6,7 @@ import { getScheduleStore } from '@/lib/schedule-store'
 import { catchUpSchedules, startRun, tickSchedules } from '@/lib/scheduler'
 import { getStore } from '@/lib/store'
 import type { Schedule, ScheduleRule } from '@/lib/types'
+import { signIn, type TestSession } from '../helpers/auth'
 import { chunk, createFakeOllama, HttpError, type FakeOllama } from '../helpers/fake-ollama'
 import { makeTempDataDir } from '../helpers/temp-data'
 
@@ -22,6 +23,8 @@ const report = (text: string) => ({ chunks: [chunk.content(text), chunk.done()] 
 
 let dataDir: string
 let cleanup: () => Promise<void>
+let session: TestSession
+const conversations = () => getStore(session.user.id)
 
 beforeEach(async () => {
   ;({ dir: dataDir, cleanup } = await makeTempDataDir())
@@ -32,13 +35,14 @@ beforeEach(async () => {
   vi.stubEnv('SYSTEM_PROMPT', 'Be brief.')
   holder.fake = createFakeOllama()
   holder.backends = []
+  session = await signIn()
 })
 
 afterEach(() => cleanup())
 
 async function dueSchedule(overrides: Partial<Schedule> = {}): Promise<Schedule> {
   const schedule: Schedule = {
-    ...getScheduleStore().create({ prompt: 'Daily news', rule }),
+    ...getScheduleStore().create({ userId: session.user.id, prompt: 'Daily news', rule }),
     nextRunAt: new Date(Date.now() - 60_000).toISOString(),
     ...overrides,
   }
@@ -46,8 +50,14 @@ async function dueSchedule(overrides: Partial<Schedule> = {}): Promise<Schedule>
   return schedule
 }
 
+/** Deletes through the API, as the signed-in user. */
+const deleteSchedule = (id: string) =>
+  scheduleDELETE(new Request('http://localhost', { headers: { cookie: session.cookie } }), {
+    params: Promise.resolve({ id }),
+  })
+
 const latest = async (id: string) => (await getScheduleStore().get(id))!
-const contents = async (id: string) => (await getStore().get(id))!.messages.map((m) => m.content)
+const contents = async (id: string) => (await conversations().get(id))!.messages.map((m) => m.content)
 
 async function runNow(id: string) {
   await startRun(await latest(id))
@@ -55,9 +65,9 @@ async function runNow(id: string) {
 }
 
 async function seedReport(title = 'Daily news') {
-  const conversation = getStore().create({ title })
+  const conversation = conversations().create({ title })
   conversation.messages.push({ role: 'user', content: 'Daily news' }, { role: 'assistant', content: 'Monday report' })
-  await getStore().save(conversation)
+  await conversations().save(conversation)
   return conversation
 }
 
@@ -71,7 +81,7 @@ describe('a recurring run', () => {
     expect(after).toMatchObject({ unread: true, lastError: null })
     expect(after.conversationId).toBeTruthy()
     expect(await contents(after.conversationId!)).toEqual(['Daily news', 'Monday report'])
-    expect(await getStore().get(after.conversationId!)).toMatchObject({ title: 'Daily news', model: 'kimi-k2.6' })
+    expect(await conversations().get(after.conversationId!)).toMatchObject({ title: 'Daily news', model: 'kimi-k2.6' })
   })
 
   it('sends the prompt on its own, with the schedule’s model, thinking and time zone', async () => {
@@ -92,7 +102,7 @@ describe('a recurring run', () => {
         { role: 'user', content: 'Daily news' },
       ],
     })
-    const saved = await getStore().get(after.conversationId!)
+    const saved = await conversations().get(after.conversationId!)
     expect(saved!.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant'])
     expect(saved!.messages[2].content).toContain('Asia/Tokyo')
   })
@@ -107,7 +117,7 @@ describe('a recurring run', () => {
 
     expect(second.conversationId).toBe(first.conversationId)
     expect(third.conversationId).toBe(first.conversationId)
-    expect(await getStore().list()).toHaveLength(1)
+    expect(await conversations().list()).toHaveLength(1)
     expect(await contents(first.conversationId!)).toEqual(['Daily news', 'Wednesday report'])
   })
 
@@ -139,7 +149,7 @@ describe('a recurring run', () => {
 
     await runNow(id)
 
-    expect((await getStore().list()).map((c) => c.id)).toEqual([old.id, other.id])
+    expect((await conversations().list()).map((c) => c.id)).toEqual([old.id, other.id])
   })
 
   it('creates a replacement if its conversation has gone', async () => {
@@ -154,7 +164,7 @@ describe('a recurring run', () => {
 
   it('leaves an archived conversation alone and starts a new one', async () => {
     const kept = await seedReport()
-    await getStore().setArchived(kept.id, true)
+    await conversations().setArchived(kept.id, true)
     holder.fake!.push(report('Tuesday report'))
     const { id } = await dueSchedule({ conversationId: kept.id })
 
@@ -202,11 +212,11 @@ describe('a failed run', () => {
 
     const failed = await runNow(id)
     expect(failed).toMatchObject({ conversationId: null, lastError: 'offline' })
-    expect(await getStore().list()).toEqual([])
+    expect(await conversations().list()).toEqual([])
 
     const recovered = await runNow(id)
     expect(recovered).toMatchObject({ lastError: null, unread: true })
-    expect(await getStore().list()).toHaveLength(1)
+    expect(await conversations().list()).toHaveLength(1)
   })
 
   it('does not hammer the model: the next attempt waits for the next scheduled time', async () => {
@@ -222,6 +232,21 @@ describe('a failed run', () => {
 })
 
 describe('tickSchedules', () => {
+  it('runs every account’s schedules, each report landing in its owner’s conversations', async () => {
+    holder.fake!.push(report('Ada’s report'), report('Bob’s report'))
+    const adas = await dueSchedule()
+    const bob = await signIn('bob')
+    const bobs = await dueSchedule({ userId: bob.user.id })
+
+    await tickSchedules()
+
+    const adaReport = (await latest(adas.id)).conversationId!
+    const bobReport = (await latest(bobs.id)).conversationId!
+    expect((await getStore(session.user.id).list()).map((c) => c.id)).toEqual([adaReport])
+    expect((await getStore(bob.user.id).list()).map((c) => c.id)).toEqual([bobReport])
+    expect(await getStore(bob.user.id).get(adaReport)).toBeNull()
+  })
+
   it('runs what is due, once, however long overdue it is, and leaves the rest', async () => {
     holder.fake!.push(report('Caught up'))
     const overdue = await dueSchedule({ nextRunAt: '2020-01-01T09:00:00.000Z' })
@@ -246,7 +271,7 @@ describe('tickSchedules', () => {
     await vi.waitFor(() => expect(holder.fake!.client.chat).toHaveBeenCalled())
     expect((await latest(id)).nextRunAt).toBe(nextRunAt)
 
-    await scheduleDELETE(new Request('http://localhost'), { params: Promise.resolve({ id }) })
+    await deleteSchedule(id)
     await run
   })
 
@@ -258,7 +283,7 @@ describe('tickSchedules', () => {
     expect(isRunning(schedule.id)).toBe(true)
     expect(startRun(schedule)).toBeNull()
 
-    await scheduleDELETE(new Request('http://localhost'), { params: Promise.resolve({ id: schedule.id }) })
+    await deleteSchedule(schedule.id)
     await run
     expect(isRunning(schedule.id)).toBe(false)
   })
@@ -284,7 +309,7 @@ describe('catchUpSchedules (opening the app)', () => {
     const upToDate = await dueSchedule({ lastRunAt: ran, nextRunAt: future })
     const paused = await dueSchedule({ enabled: false, lastError: 'fetch failed' })
 
-    const started = await catchUpSchedules()
+    const started = await catchUpSchedules(session.user.id)
     await settled(started)
 
     expect(started.sort()).toEqual([overdue.id, failed.id, neverRun.id].sort())
@@ -301,11 +326,11 @@ describe('catchUpSchedules (opening the app)', () => {
     holder.fake!.push({ error: new Error('offline') }, report('Back online'))
     const { id } = await dueSchedule({ nextRunAt: '2099-01-01T09:00:00.000Z', lastError: 'fetch failed' })
 
-    await settled(await catchUpSchedules())
+    await settled(await catchUpSchedules(session.user.id))
     expect((await latest(id)).lastError).toBe('offline')
-    await settled(await catchUpSchedules())
+    await settled(await catchUpSchedules(session.user.id))
     expect((await latest(id)).lastError).toBeNull()
-    expect(await catchUpSchedules()).toEqual([])
+    expect(await catchUpSchedules(session.user.id)).toEqual([])
     expect(holder.fake!.client.chat).toHaveBeenCalledTimes(2)
   })
 
@@ -314,10 +339,10 @@ describe('catchUpSchedules (opening the app)', () => {
     const schedule = await dueSchedule()
     const run = startRun(schedule)!
 
-    expect(await catchUpSchedules()).toEqual([])
+    expect(await catchUpSchedules(session.user.id)).toEqual([])
     expect(holder.fake!.client.chat).toHaveBeenCalledTimes(1)
 
-    await scheduleDELETE(new Request('http://localhost'), { params: Promise.resolve({ id: schedule.id }) })
+    await deleteSchedule(schedule.id)
     await run
   })
 })
@@ -328,6 +353,7 @@ describe('sharing a conversation with the person using it', () => {
       new Request('http://localhost/api/chat', {
         method: 'POST',
         body: JSON.stringify({ conversationId, message: 'A follow-up' }),
+        headers: { cookie: session.cookie },
       }),
     )
 
@@ -358,7 +384,7 @@ describe('sharing a conversation with the person using it', () => {
     expect(response.status).toBe(409)
     expect(await response.json()).toEqual({ error: expect.stringContaining('refreshing') })
 
-    await scheduleDELETE(new Request('http://localhost'), { params: Promise.resolve({ id: schedule.id }) })
+    await deleteSchedule(schedule.id)
     await run
   })
 
@@ -398,10 +424,10 @@ describe('sharing a conversation with the person using it', () => {
 
     const run = startRun(schedule)!
     await vi.waitFor(() => expect(holder.fake!.client.chat).toHaveBeenCalled())
-    await scheduleDELETE(new Request('http://localhost'), { params: Promise.resolve({ id: schedule.id }) })
+    await deleteSchedule(schedule.id)
     await run
 
     expect(await getScheduleStore().get(schedule.id)).toBeNull()
-    expect(await getStore().list()).toEqual([])
+    expect(await conversations().list()).toEqual([])
   })
 })

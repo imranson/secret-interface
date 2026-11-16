@@ -3,6 +3,7 @@ import { getScheduleStore } from '@/lib/schedule-store'
 import { getStore } from '@/lib/store'
 import type { ScheduleView } from '@/lib/types'
 import { appFetch } from '../helpers/app-fetch'
+import { signIn, type TestSession } from '../helpers/auth'
 import { chunk, createFakeOllama, type FakeOllama } from '../helpers/fake-ollama'
 import { makeTempDataDir } from '../helpers/temp-data'
 
@@ -12,6 +13,7 @@ vi.mock('@/lib/ollama', () => ({ getOllamaClient: () => holder.fake!.client }))
 const rule = { kind: 'daily', time: '09:00', timezone: 'Europe/London' }
 
 let cleanup: () => Promise<void>
+let session: TestSession
 
 beforeEach(async () => {
   const temp = await makeTempDataDir()
@@ -21,6 +23,7 @@ beforeEach(async () => {
   vi.stubEnv('OLLAMA_HOST', '')
   vi.stubEnv('OLLAMA_MODEL', 'kimi-k2.6')
   holder.fake = createFakeOllama()
+  session = await signIn()
 })
 
 afterEach(() => cleanup())
@@ -51,7 +54,7 @@ describe('/api/schedules', () => {
       conversationId: null,
     })
     expect(new Date(schedule.nextRunAt!).getTime()).toBeGreaterThan(Date.now())
-    expect(await getStore().list()).toEqual([])
+    expect(await getStore(session.user.id).list()).toEqual([])
   })
 
   it.each([
@@ -135,6 +138,26 @@ describe('/api/schedules', () => {
     expect(await statusOf(upToDate.id)).toBe('completed')
   })
 
+  it('needs a signed-in user', async () => {
+    const { id } = await create()
+    const anonymous = { headers: { cookie: '' } }
+    expect((await appFetch('/api/schedules', anonymous)).status).toBe(401)
+    expect((await appFetch(`/api/schedules/${id}/run`, { method: 'POST', ...anonymous })).status).toBe(401)
+    expect((await appFetch('/api/schedules/catch-up', { method: 'POST', ...anonymous })).status).toBe(401)
+    expect(await statusOf(id)).toBe('scheduled')
+  })
+
+  it('keeps each account’s schedules to itself', async () => {
+    const adas = await create()
+    await signIn('bob')
+    expect((await (await appFetch('/api/schedules')).json()).schedules).toEqual([])
+    expect((await send('PATCH', `/api/schedules/${adas.id}`, { enabled: false })).status).toBe(404)
+    expect((await send('POST', `/api/schedules/${adas.id}/run`)).status).toBe(404)
+    expect((await send('DELETE', `/api/schedules/${adas.id}`)).status).toBe(404)
+    expect((await (await send('POST', '/api/schedules/catch-up')).json()).started).toEqual([])
+    expect(await getScheduleStore().get(adas.id, session.user.id)).toMatchObject({ enabled: true })
+  })
+
   it('validates updates', async () => {
     const { id } = await create()
     expect((await send('PATCH', `/api/schedules/${id}`, { enabled: 'yes' })).status).toBe(400)
@@ -152,6 +175,6 @@ describe('/api/schedules', () => {
     expect((await send('DELETE', `/api/schedules/${id}`)).status).toBe(200)
     expect((await send('DELETE', `/api/schedules/${id}`)).status).toBe(404)
     expect((await (await appFetch('/api/schedules')).json()).schedules).toEqual([])
-    expect(await getStore().list()).toHaveLength(1)
+    expect(await getStore(session.user.id).list()).toHaveLength(1)
   })
 })

@@ -96,6 +96,8 @@ export interface ScheduleRule {
 /** A recurring prompt. It owns at most one conversation, which every successful run refreshes. */
 export interface Schedule {
   id: string
+  /** The account it belongs to; its reports land in that account's conversations. */
+  userId: string
   title: string
   prompt: string
   rule: ScheduleRule
@@ -120,7 +122,7 @@ export interface Schedule {
 export type ScheduleStatus = 'scheduled' | 'running' | 'unread' | 'completed' | 'failed' | 'paused'
 
 /** A schedule as sent to the browser. */
-export interface ScheduleView extends Schedule {
+export interface ScheduleView extends Omit<Schedule, 'userId'> {
   status: ScheduleStatus
 }
 
