@@ -26,6 +26,11 @@ export interface AppConfig {
   systemPrompt: string
   /** When set, creating an account requires this code. */
   registrationCode?: string
+  /**
+   * On unless SERVERLESS is set to false. The host may stop the server while it's idle (e.g. Railway's Serverless), so
+   * there's no background clock, which would keep it awake; schedules run when the app is opened instead.
+   */
+  serverless: boolean
 }
 
 type Env = Record<string, string | undefined>
@@ -34,6 +39,8 @@ function clean(value: string | undefined): string | undefined {
   const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
 }
+
+const isOff = (value: string | undefined) => ['0', 'false', 'no', 'off'].includes(clean(value)?.toLowerCase() ?? '')
 
 function positiveInt(value: string | undefined, fallback: number): number {
   const n = Number.parseInt(value ?? '', 10)
@@ -87,5 +94,6 @@ export function getConfig(env: Env = process.env): AppConfig {
     dataDir: path.resolve(/*turbopackIgnore: true*/ process.cwd(), clean(env.DATA_DIR) ?? 'data'),
     systemPrompt: clean(env.SYSTEM_PROMPT) ?? DEFAULT_SYSTEM_PROMPT,
     registrationCode: clean(env.REGISTRATION_CODE),
+    serverless: !isOff(env.SERVERLESS),
   }
 }

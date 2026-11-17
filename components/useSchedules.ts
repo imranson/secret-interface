@@ -8,6 +8,9 @@ import type { CreateScheduleBody, ScheduleView } from '@/lib/types'
 const IDLE_POLL_MS = 15_000
 const RUNNING_POLL_MS = 2_000
 
+const isDue = (s: ScheduleView) =>
+  s.enabled && s.status !== 'running' && s.nextRunAt !== null && Date.parse(s.nextRunAt) <= Date.now()
+
 /**
  * The schedule list, kept current while the tab is visible. `onRunFinished` is called whenever a schedule finishes a
  * run, however it was started.
@@ -42,7 +45,10 @@ export function useSchedules(onRunFinished: (schedule: ScheduleView) => void) {
     const poll = async () => {
       clearTimeout(timer)
       const visible = document.visibilityState === 'visible'
-      const list = visible ? await refresh().catch(() => null) : null
+      let list = visible ? await refresh().catch(() => null) : null
+      // A tab left open, or come back to later, counts as opening the app once something comes due. Without this a
+      // serverless server, which has no clock, would never run it until the page is reloaded.
+      if (list?.some(isDue)) list = await catchUpSchedules().then(refresh).catch(() => list)
       if (stopped) return
       clearTimeout(timer)
       timer = setTimeout(poll, list?.some((s) => s.status === 'running') ? RUNNING_POLL_MS : IDLE_POLL_MS)

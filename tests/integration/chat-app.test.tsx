@@ -610,6 +610,25 @@ describe('ChatApp (UI → API routes → store → Ollama)', () => {
       expect((await getScheduleStore().list(session.user.id))[0].unread).toBe(false)
     })
 
+    it('runs a schedule that comes due while the app stays open, with no server clock', async () => {
+      holder.fake!.push({ chunks: [chunk.content('Due report'), chunk.done()] })
+      const schedule = await seedSchedule()
+      const user = renderApp()
+      await user.click(within(sidebar()).getByRole('button', { name: 'Scheduled' }))
+      expect(await within(sidebar()).findByRole('button', { name: 'Run “Top news” now' })).toBeInTheDocument()
+      expect(holder.fake!.client.chat).not.toHaveBeenCalled()
+
+      // Comes due while the tab is in the background; looking at the tab again is enough to start it.
+      await getScheduleStore().update(schedule.id, (s) => {
+        s.nextRunAt = new Date(Date.now() - 60_000).toISOString()
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+
+      expect(await within(sidebar()).findByRole('button', { name: 'Scheduled, 1 unread' }, { timeout: 5000 })).toBeInTheDocument()
+      expect(holder.fake!.client.chat).toHaveBeenCalledTimes(1)
+      expect(new Date((await getScheduleStore().get(schedule.id))!.nextRunAt!).getTime()).toBeGreaterThan(Date.now())
+    })
+
     it('swaps in the new report when the open conversation refreshes, keeping the unsent draft', async () => {
       const report = await seedConversation('Top news')
       await seedSchedule((s) => {

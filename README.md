@@ -21,7 +21,8 @@ A chat client for Ollama models, built with Next.js, TypeScript, the Ollama JS S
   - A schedule keeps the server (Cloud / Local) and model it was created with
   - Each schedule owns one conversation: the first run creates it and later runs replace its contents, including any replies. A failed run keeps the last report
   - Archiving the conversation keeps that report; the next run starts a new one
-  - Runs come from a background clock (`instrumentation.ts`) that checks every 30s, so the server must be running. Anything missed while it was down runs once on start-up. Every time the app opens in a tab, each schedule shows as completed or running: any enabled schedule without an up-to-date report (never run, overdue or failed) starts then
+  - Schedules run when someone opens the app, not at their set time, so the server can sleep while idle: each account's enabled schedules without an up-to-date report (never run, overdue or failed) start when that account opens the app, and an open tab starts any that come due
+  - With `SERVERLESS=false`, a background clock (`instrumentation.ts`) also runs schedules on time, checking every 30s, so the server must stay running. Anything missed while it was down runs once on start-up
 
 ## Setup
 
@@ -46,6 +47,7 @@ No database setup is needed: without `DATABASE_URL` the app keeps everything in 
 | `DATA_DIR` | Where the embedded database lives, and where `npm run db:import` looks for old files | `data` |
 | `REGISTRATION_CODE` | When set, creating an account needs this invite code | – (open sign-up) |
 | `SYSTEM_PROMPT` | Replaces the default system prompt | – |
+| `SERVERLESS` | `false` turns on the scheduler's clock, so schedules run on time but the app never sleeps | `true` |
 
 ## Deploying on Railway
 
@@ -58,6 +60,8 @@ The repo deploys as-is: `railway.json` tells Railway to build the `Dockerfile`, 
 5. Open the URL and create the first account; it takes over anything saved before accounts existed.
 
 Keep a single replica: the scheduler and in-progress runs live in the server's memory.
+
+Railway's **Settings → Serverless** works out of the box: the app sleeps about 10 minutes after the last visible tab closes. Don't set `SERVERLESS=false` with it: the scheduler's clock queries the database every 30s, which Railway counts as activity, so the app would never sleep.
 
 Without `DATABASE_URL` the app still runs, using the embedded database at `/app/data`, but a redeploy wipes it unless you attach a volume at `/app/data`. Railway mounts volumes as root while the image runs as the `node` user, so also set `RAILWAY_RUN_UID=0`.
 

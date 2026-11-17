@@ -47,6 +47,12 @@ describe('getConfig', () => {
     expect(config.systemPrompt).toBe(DEFAULT_SYSTEM_PROMPT)
     expect(config.databaseUrl).toBeUndefined()
     expect(config.registrationCode).toBeUndefined()
+    expect(config.serverless).toBe(true)
+  })
+
+  it('is serverless unless SERVERLESS says no', () => {
+    for (const value of ['', 'true', '1', 'yes']) expect(getConfig({ SERVERLESS: value }).serverless).toBe(true)
+    for (const value of ['false', ' FALSE ', '0', 'no', 'off']) expect(getConfig({ SERVERLESS: value }).serverless).toBe(false)
   })
 
   it('reads and cleans environment values', () => {

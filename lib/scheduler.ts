@@ -119,8 +119,15 @@ export async function catchUpSchedules(userId: string, now: Date = new Date()): 
   return stale.filter((s) => startRun(s) !== null).map((s) => s.id)
 }
 
-/** Starts the background clock, once per process. Called from instrumentation.ts. */
+/**
+ * Starts the background clock, once per process. Called from instrumentation.ts. Not when serverless: its database
+ * queries would keep the server awake, so schedules only run when the app is opened (see useSchedules).
+ */
 export function startScheduler(): void {
+  if (getConfig().serverless) {
+    console.log('Serverless: no background clock; schedules run when the app is opened.')
+    return
+  }
   const key = Symbol.for('secret-interface.scheduler')
   const shared = globalThis as { [key]?: boolean }
   if (shared[key]) return

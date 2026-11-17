@@ -3,7 +3,7 @@ import { POST as chatPOST } from '@/app/api/chat/route'
 import { DELETE as scheduleDELETE } from '@/app/api/schedules/[id]/route'
 import { beginChat, endChat, isRunning } from '@/lib/run-state'
 import { getScheduleStore } from '@/lib/schedule-store'
-import { catchUpSchedules, startRun, tickSchedules } from '@/lib/scheduler'
+import { catchUpSchedules, startRun, startScheduler, tickSchedules } from '@/lib/scheduler'
 import { getStore } from '@/lib/store'
 import type { Schedule, ScheduleRule } from '@/lib/types'
 import { signIn, type TestSession } from '../helpers/auth'
@@ -429,5 +429,18 @@ describe('sharing a conversation with the person using it', () => {
 
     expect(await getScheduleStore().get(schedule.id)).toBeNull()
     expect(await conversations().list()).toEqual([])
+  })
+})
+
+describe('startScheduler', () => {
+  it('starts no clock by default (serverless), so the server can go to sleep', () => {
+    vi.stubEnv('SERVERLESS', '')
+    const setInterval = vi.spyOn(globalThis, 'setInterval')
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    startScheduler()
+
+    expect(setInterval).not.toHaveBeenCalled()
+    vi.restoreAllMocks()
   })
 })
